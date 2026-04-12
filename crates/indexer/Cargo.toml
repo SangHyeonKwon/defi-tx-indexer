@@ -1,0 +1,26 @@
+[package]
+name = "indexer"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Ethereum block indexer for DeFi Analytics (Uniswap V3)"
+
+[[bin]]
+name = "indexer"
+path = "src/main.rs"
+
+[dependencies]
+db = { path = "../db" }
+decoder = { path = "../decoder" }
+
+alloy.workspace = true
+tokio.workspace = true
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+chrono.workspace = true
+bigdecimal.workspace = true
