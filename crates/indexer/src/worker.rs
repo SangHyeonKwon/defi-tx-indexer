@@ -1,7 +1,19 @@
+use std::str::FromStr;
+use std::sync::Arc;
+
+use alloy::consensus::Transaction as ConsensusTx;
+use alloy::eips::BlockNumberOrTag;
+use alloy::network::TransactionResponse;
+use alloy::providers::{Provider, ProviderBuilder};
+use bigdecimal::BigDecimal;
+use chrono::DateTime;
 use sqlx::PgPool;
 use tokio::sync::Semaphore;
 
-use std::sync::Arc;
+use db::models::{
+    Block, LiquidityEvent, LiquidityEventType, SwapEvent, TokenTransfer, Transaction,
+};
+use decoder::events::{DecodedEvent, DecodedLiquidity, DecodedSwap, DecodedTransfer};
 
 /// 블록 범위를 청크 단위로 분할하여 병렬 수집하는 워커 풀.
 pub struct WorkerPool {
@@ -73,17 +85,196 @@ impl WorkerPool {
 
     /// 단일 블록을 수집·디코딩·저장한다.
     ///
-    /// Phase 3에서 구현:
     /// 1. RPC로 블록 + 영수증 fetch
     /// 2. 각 로그를 decoder로 디코딩
     /// 3. DB에 배치 INSERT
     async fn process_block(
-        _db_pool: &PgPool,
-        _rpc_url: &str,
+        db_pool: &PgPool,
+        rpc_url: &str,
         block_number: u64,
     ) -> anyhow::Result<()> {
-        tracing::debug!(block_number, "processing block (stub)");
-        // Phase 3에서 구현
+        tracing::debug!(block_number, "processing block");
+
+        let provider = ProviderBuilder::new().connect_http(
+            rpc_url
+                .parse()
+                .map_err(|e| anyhow::anyhow!("invalid RPC URL: {e}"))?,
+        );
+
+        // 1. 블록 조회 (full transactions)
+        let block = provider
+            .get_block_by_number(BlockNumberOrTag::Number(block_number))
+            .full()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("block {block_number} not found"))?;
+
+        let timestamp =
+            DateTime::from_timestamp(block.header.timestamp as i64, 0).unwrap_or_default();
+
+        // 2. Block 모델 저장
+        let block_model = Block {
+            block_number: block_number as i64,
+            timestamp,
+            gas_used: block.header.gas_used as i64,
+        };
+        db::queries::insert_blocks(db_pool, &[block_model]).await?;
+
+        // 3. 트랜잭션 영수증 조회
+        let receipts = provider
+            .get_block_receipts(BlockNumberOrTag::Number(block_number).into())
+            .await?
+            .unwrap_or_default();
+
+        // 4. 트랜잭션 모델 빌드 + 로그 디코딩
+        let block_txs: Vec<_> = block.transactions.into_transactions().collect();
+        let mut transactions = Vec::with_capacity(block_txs.len());
+        let mut swap_events: Vec<SwapEvent> = Vec::new();
+        let mut liquidity_events: Vec<LiquidityEvent> = Vec::new();
+        let mut token_transfers: Vec<TokenTransfer> = Vec::new();
+
+        let mut global_log_index: i32 = 0;
+
+        for (idx, receipt) in receipts.iter().enumerate() {
+            let tx_hash_str = format!("0x{:x}", receipt.transaction_hash);
+
+            // 트랜잭션 모델 빌드 (블록 TX + 영수증 매칭)
+            if let Some(tx) = block_txs.get(idx) {
+                let gas_price = tx.effective_gas_price.unwrap_or(0);
+                let tx_model = Transaction {
+                    tx_hash: tx_hash_str.clone(),
+                    from_addr: format!("{}", tx.from()).to_lowercase(),
+                    to_addr: ConsensusTx::to(tx).map(|a| format!("{a}").to_lowercase()),
+                    block_number: block_number as i64,
+                    gas_used: receipt.gas_used as i64,
+                    gas_price: BigDecimal::from_str(&gas_price.to_string())
+                        .unwrap_or_else(|_| BigDecimal::from(0)),
+                    value: BigDecimal::from_str(&ConsensusTx::value(tx).to_string())
+                        .unwrap_or_else(|_| BigDecimal::from(0)),
+                    status: if receipt.status() { 1 } else { 0 },
+                    input_data: if ConsensusTx::input(tx).is_empty() {
+                        None
+                    } else {
+                        Some(format!("{}", ConsensusTx::input(tx)))
+                    },
+                };
+                transactions.push(tx_model);
+            }
+
+            // 로그 디코딩
+            for log in receipt.inner.logs() {
+                let log_data = log.data();
+                let topics = log_data.topics().to_vec();
+                if topics.is_empty() {
+                    global_log_index += 1;
+                    continue;
+                }
+
+                let data = &log_data.data;
+                let log_address = format!("{}", log.address()).to_lowercase();
+
+                match decoder::events::decode_log(
+                    &topics,
+                    data,
+                    &log_address,
+                    &tx_hash_str,
+                    global_log_index,
+                    timestamp,
+                ) {
+                    Ok(DecodedEvent::Swap(s)) => swap_events.push(to_swap_model(s)),
+                    Ok(DecodedEvent::Liquidity(l)) => {
+                        liquidity_events.push(to_liquidity_model(l));
+                    }
+                    Ok(DecodedEvent::Transfer(t)) => {
+                        token_transfers.push(to_transfer_model(t));
+                    }
+                    Err(decoder::error::DecodeError::UnknownTopic(_)) => {}
+                    Err(e) => {
+                        tracing::warn!(block_number, error = %e, "failed to decode log");
+                    }
+                }
+
+                global_log_index += 1;
+            }
+        }
+
+        // 5. 배치 INSERT
+        if !transactions.is_empty() {
+            db::queries::insert_transactions(db_pool, &transactions).await?;
+        }
+        if !swap_events.is_empty() {
+            db::queries::insert_swap_events(db_pool, &swap_events).await?;
+        }
+        if !liquidity_events.is_empty() {
+            db::queries::insert_liquidity_events(db_pool, &liquidity_events).await?;
+        }
+        if !token_transfers.is_empty() {
+            db::queries::insert_token_transfers(db_pool, &token_transfers).await?;
+        }
+
+        tracing::debug!(
+            block_number,
+            txs = transactions.len(),
+            swaps = swap_events.len(),
+            liq = liquidity_events.len(),
+            transfers = token_transfers.len(),
+            "block processed"
+        );
         Ok(())
+    }
+}
+
+/// `DecodedSwap` → DB `SwapEvent` 변환.
+fn to_swap_model(s: DecodedSwap) -> SwapEvent {
+    SwapEvent {
+        pool_address: s.pool_address,
+        tx_hash: s.tx_hash,
+        sender: s.sender,
+        recipient: s.recipient,
+        amount0: s.amount0,
+        amount1: s.amount1,
+        amount_in: s.amount_in,
+        amount_out: s.amount_out,
+        sqrt_price_x96: s.sqrt_price_x96,
+        liquidity: s.liquidity,
+        tick: s.tick,
+        log_index: s.log_index,
+        timestamp: s.timestamp,
+        event_id: 0, // DB에서 자동 생성
+    }
+}
+
+/// `DecodedLiquidity` → DB `LiquidityEvent` 변환.
+fn to_liquidity_model(l: DecodedLiquidity) -> LiquidityEvent {
+    let event_type = match l.event_type.as_str() {
+        "BURN" => LiquidityEventType::Burn,
+        _ => LiquidityEventType::Mint,
+    };
+    LiquidityEvent {
+        event_type,
+        pool_address: l.pool_address,
+        tx_hash: l.tx_hash,
+        provider: l.provider,
+        token0_amount: l.token0_amount,
+        token1_amount: l.token1_amount,
+        tick_lower: l.tick_lower,
+        tick_upper: l.tick_upper,
+        liquidity: l.liquidity,
+        log_index: l.log_index,
+        timestamp: l.timestamp,
+        event_id: 0,
+    }
+}
+
+/// `DecodedTransfer` → DB `TokenTransfer` 변환.
+fn to_transfer_model(t: DecodedTransfer) -> TokenTransfer {
+    TokenTransfer {
+        tx_hash: t.tx_hash,
+        token_address: t.token_address,
+        from_addr: t.from_addr,
+        to_addr: t.to_addr,
+        amount: t.amount,
+        log_index: t.log_index,
+        timestamp: t.timestamp,
+        transfer_id: 0,
     }
 }
