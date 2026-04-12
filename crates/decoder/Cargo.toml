@@ -8,7 +8,6 @@ description = "ABI decoder and event parser for Uniswap V3 events"
 
 [dependencies]
 alloy.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

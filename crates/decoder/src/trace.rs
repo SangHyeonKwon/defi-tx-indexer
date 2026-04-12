@@ -1,9 +1,7 @@
-use serde::{Deserialize, Serialize};
-
 use crate::error::DecodeError;
 
 /// `debug_traceTransaction` 결과의 단일 호출 프레임.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CallFrame {
     /// 호출 타입 (CALL, DELEGATECALL, STATICCALL, CREATE, CREATE2)
     pub call_type: String,

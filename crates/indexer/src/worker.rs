@@ -63,16 +63,22 @@ impl WorkerPool {
     /// 단일 블록 청크를 처리한다.
     #[tracing::instrument(skip(self))]
     async fn process_chunk(&self, from: u64, to: u64) -> anyhow::Result<()> {
+        let provider = ProviderBuilder::new().connect_http(
+            self.rpc_url
+                .parse()
+                .map_err(|e| anyhow::anyhow!("invalid RPC URL: {e}"))?,
+        );
+
         let mut join_set = tokio::task::JoinSet::new();
 
         for block_num in from..=to {
             let permit = Arc::clone(&self.semaphore);
-            let rpc_url = self.rpc_url.clone();
+            let provider = provider.clone();
             let db_pool = self.db_pool.clone();
 
             join_set.spawn(async move {
                 let _permit = permit.acquire().await?;
-                Self::process_block(&db_pool, &rpc_url, block_num).await
+                Self::process_block(&db_pool, &provider, block_num).await
             });
         }
 
@@ -90,16 +96,10 @@ impl WorkerPool {
     /// 3. DB에 배치 INSERT
     async fn process_block(
         db_pool: &PgPool,
-        rpc_url: &str,
+        provider: &impl Provider,
         block_number: u64,
     ) -> anyhow::Result<()> {
         tracing::debug!(block_number, "processing block");
-
-        let provider = ProviderBuilder::new().connect_http(
-            rpc_url
-                .parse()
-                .map_err(|e| anyhow::anyhow!("invalid RPC URL: {e}"))?,
-        );
 
         // 1. 블록 조회 (full transactions)
         let block = provider
