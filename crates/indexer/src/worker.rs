@@ -1,5 +1,6 @@
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use alloy::consensus::Transaction as ConsensusTx;
 use alloy::eips::BlockNumberOrTag;
@@ -7,6 +8,7 @@ use alloy::network::TransactionResponse;
 use alloy::providers::ext::DebugApi;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::trace::geth::{GethDebugTracingOptions, GethTrace};
+use backoff::ExponentialBackoffBuilder;
 use bigdecimal::BigDecimal;
 use chrono::DateTime;
 use sqlx::PgPool;
@@ -108,12 +110,25 @@ impl WorkerPool {
     ) -> anyhow::Result<()> {
         tracing::debug!(block_number, "processing block");
 
-        // 1. 블록 조회 (full transactions)
-        let block = provider
-            .get_block_by_number(BlockNumberOrTag::Number(block_number))
-            .full()
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("block {block_number} not found"))?;
+        // 1. 블록 + 영수증 병렬 조회 (with retry)
+        let block_num_tag = BlockNumberOrTag::Number(block_number);
+        let (block, receipts) = tokio::try_join!(
+            rpc_with_retry(|| async {
+                provider
+                    .get_block_by_number(block_num_tag)
+                    .full()
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?
+                    .ok_or_else(|| anyhow::anyhow!("block {block_number} not found"))
+            }),
+            rpc_with_retry(|| async {
+                provider
+                    .get_block_receipts(block_num_tag.into())
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))
+                    .map(|r| r.unwrap_or_default())
+            })
+        )?;
 
         let timestamp =
             DateTime::from_timestamp(block.header.timestamp as i64, 0).unwrap_or_default();
@@ -125,12 +140,6 @@ impl WorkerPool {
             gas_used: block.header.gas_used as i64,
         };
         db::queries::insert_blocks(db_pool, &[block_model]).await?;
-
-        // 3. 트랜잭션 영수증 조회
-        let receipts = provider
-            .get_block_receipts(BlockNumberOrTag::Number(block_number).into())
-            .await?
-            .unwrap_or_default();
 
         // 4. 트랜잭션 모델 빌드 + 로그 디코딩
         let block_txs: Vec<_> = block.transactions.into_transactions().collect();
@@ -427,4 +436,24 @@ fn to_transfer_model(t: DecodedTransfer) -> TokenTransfer {
         timestamp: t.timestamp,
         transfer_id: 0,
     }
+}
+
+/// RPC 호출을 지수 백오프로 재시도한다.
+///
+/// 최대 5회 재시도, 초기 간격 500ms, 최대 간격 10초.
+async fn rpc_with_retry<F, Fut, T>(f: F) -> anyhow::Result<T>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<T>>,
+{
+    let backoff = ExponentialBackoffBuilder::new()
+        .with_initial_interval(Duration::from_millis(500))
+        .with_max_interval(Duration::from_secs(10))
+        .with_max_elapsed_time(Some(Duration::from_secs(60)))
+        .build();
+
+    backoff::future::retry(backoff, || async {
+        f().await.map_err(backoff::Error::transient)
+    })
+    .await
 }

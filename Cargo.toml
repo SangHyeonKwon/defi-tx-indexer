@@ -45,3 +45,6 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Encoding
 hex = "0.4"
+
+# Resilience
+backoff = { version = "0.4", features = ["tokio"] }

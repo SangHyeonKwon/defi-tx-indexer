@@ -25,3 +25,4 @@ tracing-subscriber.workspace = true
 chrono.workspace = true
 bigdecimal.workspace = true
 hex.workspace = true
+backoff.workspace = true
