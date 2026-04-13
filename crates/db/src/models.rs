@@ -251,6 +251,19 @@ pub struct UserProfile {
     pub total_volume_usd: BigDecimal,
 }
 
+/// 인덱서 체크포인트 — 크래시 복구용.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct IndexerCheckpoint {
+    /// 자동 생성 ID
+    pub checkpoint_id: i32,
+    /// 체인 ID (1 = Ethereum mainnet)
+    pub chain_id: i32,
+    /// 마지막으로 완전히 처리된 블록 번호
+    pub last_processed_block: i64,
+    /// 마지막 갱신 시각
+    pub updated_at: DateTime<Utc>,
+}
+
 /// 트랜잭션 내부 호출 트레이스.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct TraceLog {

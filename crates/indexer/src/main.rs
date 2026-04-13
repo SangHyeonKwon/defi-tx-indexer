@@ -33,6 +33,26 @@ async fn main() -> anyhow::Result<()> {
     db::run_migrations(&db_pool).await?;
     tracing::info!("database connected and migrations applied");
 
+    // 체크포인트에서 재개 지점 결정
+    let from_block = match db::queries::get_last_checkpoint(&db_pool, 1).await? {
+        Some(last) if last >= config.from_block as i64 => {
+            let resume = (last + 1) as u64;
+            tracing::info!(
+                checkpoint = last,
+                resume_from = resume,
+                "resuming from checkpoint"
+            );
+            resume
+        }
+        _ => config.from_block,
+    };
+
+    let to_block = config.to_block.unwrap_or(from_block);
+    if from_block > to_block {
+        tracing::info!("all blocks already indexed up to checkpoint");
+        return Ok(());
+    }
+
     // 워커 풀 생성 및 인덱싱 시작
     let worker_pool = WorkerPool::new(
         db_pool,
@@ -41,8 +61,7 @@ async fn main() -> anyhow::Result<()> {
         config.batch_size,
     );
 
-    let to_block = config.to_block.unwrap_or(config.from_block);
-    worker_pool.index_range(config.from_block, to_block).await?;
+    worker_pool.index_range(from_block, to_block).await?;
 
     tracing::info!("indexer finished successfully");
     Ok(())

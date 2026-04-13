@@ -335,6 +335,38 @@ pub async fn insert_trace_logs(pool: &PgPool, traces: &[TraceLog]) -> Result<u64
     Ok(count)
 }
 
+/// 특정 체인의 마지막 체크포인트를 조회한다.
+#[tracing::instrument(skip(pool))]
+pub async fn get_last_checkpoint(pool: &PgPool, chain_id: i32) -> Result<Option<i64>, DbError> {
+    let row: Option<(i64,)> =
+        sqlx::query_as("SELECT last_processed_block FROM indexer_checkpoint WHERE chain_id = $1")
+            .bind(chain_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.map(|r| r.0))
+}
+
+/// 체크포인트를 갱신한다 (없으면 INSERT, 있으면 UPDATE).
+#[tracing::instrument(skip(pool))]
+pub async fn update_checkpoint(
+    pool: &PgPool,
+    chain_id: i32,
+    last_processed_block: i64,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO indexer_checkpoint (chain_id, last_processed_block, updated_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (chain_id) DO UPDATE
+         SET last_processed_block = EXCLUDED.last_processed_block,
+             updated_at = NOW()",
+    )
+    .bind(chain_id)
+    .bind(last_processed_block)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// 블록 번호로 블록을 조회한다.
 #[tracing::instrument(skip(pool))]
 pub async fn get_block_by_number(pool: &PgPool, block_number: i64) -> Result<Block, DbError> {
