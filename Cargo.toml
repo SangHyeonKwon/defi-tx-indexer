@@ -42,3 +42,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Numeric
 bigdecimal = { version = "0.4", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+
+# Encoding
+hex = "0.4"
