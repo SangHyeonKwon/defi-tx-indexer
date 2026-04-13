@@ -52,6 +52,10 @@ impl WorkerPool {
         for chunk_start in (from_block..=to_block).step_by(self.batch_size) {
             let chunk_end = (chunk_start + self.batch_size as u64 - 1).min(to_block);
             self.process_chunk(chunk_start, chunk_end).await?;
+
+            // 체크포인트 갱신 (chunk 완료 후)
+            db::queries::update_checkpoint(&self.db_pool, 1, chunk_end as i64).await?;
+
             processed += chunk_end - chunk_start + 1;
             tracing::info!(processed, total, "progress");
         }
