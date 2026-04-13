@@ -1,338 +1,459 @@
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
 use crate::error::DbError;
 use crate::models::{
-    Block, FailedTransaction, LiquidityEvent, Pool, PriceSnapshot, SwapEvent, Token, TokenTransfer,
-    TraceLog, Transaction, UserProfile,
+    Block, ErrorCategory, FailedTransaction, LiquidityEvent, LiquidityEventType, Pool,
+    PriceSnapshot, SnapshotInterval, SwapEvent, Token, TokenTransfer, TraceLog, Transaction,
+    UserProfile,
 };
 
-/// 블록을 배치 INSERT한다.
-#[tracing::instrument(skip(pool, blocks))]
-pub async fn insert_blocks(pool: &PgPool, blocks: &[Block]) -> Result<u64, DbError> {
-    let mut tx = pool.begin().await?;
-    let mut count = 0u64;
-
-    for block in blocks {
-        sqlx::query(
-            "INSERT INTO block (block_number, timestamp, gas_used)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (block_number) DO NOTHING",
-        )
-        .bind(block.block_number)
-        .bind(block.timestamp)
-        .bind(block.gas_used)
-        .execute(&mut *tx)
-        .await?;
-        count += 1;
+/// PostgreSQL enum 값으로 변환하는 헬퍼.
+fn liquidity_type_to_sql(t: &LiquidityEventType) -> &'static str {
+    match t {
+        LiquidityEventType::Mint => "MINT",
+        LiquidityEventType::Burn => "BURN",
     }
-
-    tx.commit().await?;
-    Ok(count)
 }
 
-/// 트랜잭션을 배치 INSERT한다.
+/// PostgreSQL enum 값으로 변환하는 헬퍼.
+fn error_category_to_sql(c: &ErrorCategory) -> &'static str {
+    match c {
+        ErrorCategory::InsufficientBalance => "INSUFFICIENT_BALANCE",
+        ErrorCategory::SlippageExceeded => "SLIPPAGE_EXCEEDED",
+        ErrorCategory::DeadlineExpired => "DEADLINE_EXPIRED",
+        ErrorCategory::Unauthorized => "UNAUTHORIZED",
+        ErrorCategory::TransferFailed => "TRANSFER_FAILED",
+        ErrorCategory::Unknown => "UNKNOWN",
+    }
+}
+
+/// PostgreSQL enum 값으로 변환하는 헬퍼.
+fn snapshot_interval_to_sql(i: &SnapshotInterval) -> &'static str {
+    match i {
+        SnapshotInterval::OneMinute => "1m",
+        SnapshotInterval::FiveMinutes => "5m",
+        SnapshotInterval::FifteenMinutes => "15m",
+        SnapshotInterval::OneHour => "1h",
+        SnapshotInterval::FourHours => "4h",
+        SnapshotInterval::OneDay => "1d",
+    }
+}
+
+/// 블록을 UNNEST 배치 INSERT한다.
+#[tracing::instrument(skip(pool, blocks))]
+pub async fn insert_blocks(pool: &PgPool, blocks: &[Block]) -> Result<u64, DbError> {
+    if blocks.is_empty() {
+        return Ok(0);
+    }
+
+    let block_numbers: Vec<i64> = blocks.iter().map(|b| b.block_number).collect();
+    let timestamps: Vec<DateTime<Utc>> = blocks.iter().map(|b| b.timestamp).collect();
+    let gas_useds: Vec<i64> = blocks.iter().map(|b| b.gas_used).collect();
+
+    let result = sqlx::query(
+        "INSERT INTO block (block_number, timestamp, gas_used)
+         SELECT * FROM UNNEST($1::BIGINT[], $2::TIMESTAMPTZ[], $3::BIGINT[])
+         ON CONFLICT (block_number) DO NOTHING",
+    )
+    .bind(&block_numbers)
+    .bind(&timestamps)
+    .bind(&gas_useds)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
+}
+
+/// 트랜잭션을 UNNEST 배치 INSERT한다.
 #[tracing::instrument(skip(pool, transactions))]
 pub async fn insert_transactions(
     pool: &PgPool,
     transactions: &[Transaction],
 ) -> Result<u64, DbError> {
-    let mut tx = pool.begin().await?;
-    let mut count = 0u64;
-
-    for t in transactions {
-        sqlx::query(
-            "INSERT INTO transaction (tx_hash, from_addr, to_addr, block_number, gas_used, gas_price, value, status, input_data)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-             ON CONFLICT (tx_hash) DO NOTHING",
-        )
-        .bind(&t.tx_hash)
-        .bind(&t.from_addr)
-        .bind(&t.to_addr)
-        .bind(t.block_number)
-        .bind(t.gas_used)
-        .bind(&t.gas_price)
-        .bind(&t.value)
-        .bind(t.status)
-        .bind(&t.input_data)
-        .execute(&mut *tx)
-        .await?;
-        count += 1;
+    if transactions.is_empty() {
+        return Ok(0);
     }
 
-    tx.commit().await?;
-    Ok(count)
+    let tx_hashes: Vec<&str> = transactions.iter().map(|t| t.tx_hash.as_str()).collect();
+    let from_addrs: Vec<&str> = transactions.iter().map(|t| t.from_addr.as_str()).collect();
+    let to_addrs: Vec<Option<&str>> = transactions.iter().map(|t| t.to_addr.as_deref()).collect();
+    let block_numbers: Vec<i64> = transactions.iter().map(|t| t.block_number).collect();
+    let gas_useds: Vec<i64> = transactions.iter().map(|t| t.gas_used).collect();
+    let gas_prices: Vec<&bigdecimal::BigDecimal> =
+        transactions.iter().map(|t| &t.gas_price).collect();
+    let values: Vec<&bigdecimal::BigDecimal> = transactions.iter().map(|t| &t.value).collect();
+    let statuses: Vec<i16> = transactions.iter().map(|t| t.status).collect();
+    let input_datas: Vec<Option<&str>> = transactions
+        .iter()
+        .map(|t| t.input_data.as_deref())
+        .collect();
+
+    let result = sqlx::query(
+        "INSERT INTO transaction (tx_hash, from_addr, to_addr, block_number, gas_used, gas_price, value, status, input_data)
+         SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::TEXT[], $4::BIGINT[], $5::BIGINT[], $6::NUMERIC[], $7::NUMERIC[], $8::SMALLINT[], $9::TEXT[])
+         ON CONFLICT (tx_hash) DO NOTHING",
+    )
+    .bind(&tx_hashes)
+    .bind(&from_addrs)
+    .bind(&to_addrs)
+    .bind(&block_numbers)
+    .bind(&gas_useds)
+    .bind(&gas_prices)
+    .bind(&values)
+    .bind(&statuses)
+    .bind(&input_datas)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
 }
 
-/// 토큰 메타데이터를 INSERT한다.
+/// 토큰 메타데이터를 UNNEST 배치 INSERT한다.
 #[tracing::instrument(skip(pool, tokens))]
 pub async fn insert_tokens(pool: &PgPool, tokens: &[Token]) -> Result<u64, DbError> {
-    let mut tx = pool.begin().await?;
-    let mut count = 0u64;
-
-    for token in tokens {
-        sqlx::query(
-            "INSERT INTO token (token_address, symbol, name, decimals)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (token_address) DO NOTHING",
-        )
-        .bind(&token.token_address)
-        .bind(&token.symbol)
-        .bind(&token.name)
-        .bind(token.decimals)
-        .execute(&mut *tx)
-        .await?;
-        count += 1;
+    if tokens.is_empty() {
+        return Ok(0);
     }
 
-    tx.commit().await?;
-    Ok(count)
+    let addresses: Vec<&str> = tokens.iter().map(|t| t.token_address.as_str()).collect();
+    let symbols: Vec<&str> = tokens.iter().map(|t| t.symbol.as_str()).collect();
+    let names: Vec<&str> = tokens.iter().map(|t| t.name.as_str()).collect();
+    let decimals: Vec<i16> = tokens.iter().map(|t| t.decimals).collect();
+
+    let result = sqlx::query(
+        "INSERT INTO token (token_address, symbol, name, decimals)
+         SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::TEXT[], $4::SMALLINT[])
+         ON CONFLICT (token_address) DO NOTHING",
+    )
+    .bind(&addresses)
+    .bind(&symbols)
+    .bind(&names)
+    .bind(&decimals)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
 }
 
-/// 풀 정보를 INSERT한다.
+/// 풀 정보를 UNNEST 배치 INSERT한다.
 #[tracing::instrument(skip(pool_conn, pools))]
 pub async fn insert_pools(pool_conn: &PgPool, pools: &[Pool]) -> Result<u64, DbError> {
-    let mut tx = pool_conn.begin().await?;
-    let mut count = 0u64;
-
-    for p in pools {
-        sqlx::query(
-            "INSERT INTO pool (pool_address, pair_name, token0_address, token1_address, fee_tier, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (pool_address) DO NOTHING",
-        )
-        .bind(&p.pool_address)
-        .bind(&p.pair_name)
-        .bind(&p.token0_address)
-        .bind(&p.token1_address)
-        .bind(p.fee_tier)
-        .bind(p.created_at)
-        .execute(&mut *tx)
-        .await?;
-        count += 1;
+    if pools.is_empty() {
+        return Ok(0);
     }
 
-    tx.commit().await?;
-    Ok(count)
+    let addresses: Vec<&str> = pools.iter().map(|p| p.pool_address.as_str()).collect();
+    let pair_names: Vec<&str> = pools.iter().map(|p| p.pair_name.as_str()).collect();
+    let token0s: Vec<&str> = pools.iter().map(|p| p.token0_address.as_str()).collect();
+    let token1s: Vec<&str> = pools.iter().map(|p| p.token1_address.as_str()).collect();
+    let fee_tiers: Vec<i32> = pools.iter().map(|p| p.fee_tier).collect();
+    let created_ats: Vec<DateTime<Utc>> = pools.iter().map(|p| p.created_at).collect();
+
+    let result = sqlx::query(
+        "INSERT INTO pool (pool_address, pair_name, token0_address, token1_address, fee_tier, created_at)
+         SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::TEXT[], $4::TEXT[], $5::INT[], $6::TIMESTAMPTZ[])
+         ON CONFLICT (pool_address) DO NOTHING",
+    )
+    .bind(&addresses)
+    .bind(&pair_names)
+    .bind(&token0s)
+    .bind(&token1s)
+    .bind(&fee_tiers)
+    .bind(&created_ats)
+    .execute(pool_conn)
+    .await?;
+
+    Ok(result.rows_affected())
 }
 
-/// 스왑 이벤트를 배치 INSERT한다.
+/// 스왑 이벤트를 UNNEST 배치 INSERT한다.
 #[tracing::instrument(skip(pool, events))]
 pub async fn insert_swap_events(pool: &PgPool, events: &[SwapEvent]) -> Result<u64, DbError> {
-    let mut tx = pool.begin().await?;
-    let mut count = 0u64;
-
-    for e in events {
-        sqlx::query(
-            "INSERT INTO swap_event (pool_address, tx_hash, sender, recipient, amount0, amount1, amount_in, amount_out, sqrt_price_x96, liquidity, tick, log_index, timestamp)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-             ON CONFLICT (tx_hash, log_index) DO NOTHING",
-        )
-        .bind(&e.pool_address)
-        .bind(&e.tx_hash)
-        .bind(&e.sender)
-        .bind(&e.recipient)
-        .bind(&e.amount0)
-        .bind(&e.amount1)
-        .bind(&e.amount_in)
-        .bind(&e.amount_out)
-        .bind(&e.sqrt_price_x96)
-        .bind(&e.liquidity)
-        .bind(e.tick)
-        .bind(e.log_index)
-        .bind(e.timestamp)
-        .execute(&mut *tx)
-        .await?;
-        count += 1;
+    if events.is_empty() {
+        return Ok(0);
     }
 
-    tx.commit().await?;
-    Ok(count)
+    let pool_addresses: Vec<&str> = events.iter().map(|e| e.pool_address.as_str()).collect();
+    let tx_hashes: Vec<&str> = events.iter().map(|e| e.tx_hash.as_str()).collect();
+    let senders: Vec<&str> = events.iter().map(|e| e.sender.as_str()).collect();
+    let recipients: Vec<&str> = events.iter().map(|e| e.recipient.as_str()).collect();
+    let amount0s: Vec<&bigdecimal::BigDecimal> = events.iter().map(|e| &e.amount0).collect();
+    let amount1s: Vec<&bigdecimal::BigDecimal> = events.iter().map(|e| &e.amount1).collect();
+    let amount_ins: Vec<&bigdecimal::BigDecimal> = events.iter().map(|e| &e.amount_in).collect();
+    let amount_outs: Vec<&bigdecimal::BigDecimal> = events.iter().map(|e| &e.amount_out).collect();
+    let sqrt_prices: Vec<&bigdecimal::BigDecimal> =
+        events.iter().map(|e| &e.sqrt_price_x96).collect();
+    let liquidities: Vec<&bigdecimal::BigDecimal> = events.iter().map(|e| &e.liquidity).collect();
+    let ticks: Vec<i32> = events.iter().map(|e| e.tick).collect();
+    let log_indices: Vec<i32> = events.iter().map(|e| e.log_index).collect();
+    let timestamps: Vec<DateTime<Utc>> = events.iter().map(|e| e.timestamp).collect();
+
+    let result = sqlx::query(
+        "INSERT INTO swap_event (pool_address, tx_hash, sender, recipient, amount0, amount1, amount_in, amount_out, sqrt_price_x96, liquidity, tick, log_index, timestamp)
+         SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::TEXT[], $4::TEXT[], $5::NUMERIC[], $6::NUMERIC[], $7::NUMERIC[], $8::NUMERIC[], $9::NUMERIC[], $10::NUMERIC[], $11::INT[], $12::INT[], $13::TIMESTAMPTZ[])
+         ON CONFLICT (tx_hash, log_index) DO NOTHING",
+    )
+    .bind(&pool_addresses)
+    .bind(&tx_hashes)
+    .bind(&senders)
+    .bind(&recipients)
+    .bind(&amount0s)
+    .bind(&amount1s)
+    .bind(&amount_ins)
+    .bind(&amount_outs)
+    .bind(&sqrt_prices)
+    .bind(&liquidities)
+    .bind(&ticks)
+    .bind(&log_indices)
+    .bind(&timestamps)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
 }
 
-/// 유동성 이벤트를 배치 INSERT한다.
+/// 유동성 이벤트를 UNNEST 배치 INSERT한다.
 #[tracing::instrument(skip(pool, events))]
 pub async fn insert_liquidity_events(
     pool: &PgPool,
     events: &[LiquidityEvent],
 ) -> Result<u64, DbError> {
-    let mut tx = pool.begin().await?;
-    let mut count = 0u64;
-
-    for e in events {
-        sqlx::query(
-            "INSERT INTO liquidity_event (event_type, pool_address, tx_hash, provider, token0_amount, token1_amount, tick_lower, tick_upper, liquidity, log_index, timestamp)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-             ON CONFLICT (tx_hash, log_index) DO NOTHING",
-        )
-        .bind(&e.event_type)
-        .bind(&e.pool_address)
-        .bind(&e.tx_hash)
-        .bind(&e.provider)
-        .bind(&e.token0_amount)
-        .bind(&e.token1_amount)
-        .bind(e.tick_lower)
-        .bind(e.tick_upper)
-        .bind(&e.liquidity)
-        .bind(e.log_index)
-        .bind(e.timestamp)
-        .execute(&mut *tx)
-        .await?;
-        count += 1;
+    if events.is_empty() {
+        return Ok(0);
     }
 
-    tx.commit().await?;
-    Ok(count)
+    let event_types: Vec<&str> = events
+        .iter()
+        .map(|e| liquidity_type_to_sql(&e.event_type))
+        .collect();
+    let pool_addresses: Vec<&str> = events.iter().map(|e| e.pool_address.as_str()).collect();
+    let tx_hashes: Vec<&str> = events.iter().map(|e| e.tx_hash.as_str()).collect();
+    let providers: Vec<&str> = events.iter().map(|e| e.provider.as_str()).collect();
+    let token0_amounts: Vec<&bigdecimal::BigDecimal> =
+        events.iter().map(|e| &e.token0_amount).collect();
+    let token1_amounts: Vec<&bigdecimal::BigDecimal> =
+        events.iter().map(|e| &e.token1_amount).collect();
+    let tick_lowers: Vec<i32> = events.iter().map(|e| e.tick_lower).collect();
+    let tick_uppers: Vec<i32> = events.iter().map(|e| e.tick_upper).collect();
+    let liquidities: Vec<&bigdecimal::BigDecimal> = events.iter().map(|e| &e.liquidity).collect();
+    let log_indices: Vec<i32> = events.iter().map(|e| e.log_index).collect();
+    let timestamps: Vec<DateTime<Utc>> = events.iter().map(|e| e.timestamp).collect();
+
+    let result = sqlx::query(
+        "INSERT INTO liquidity_event (event_type, pool_address, tx_hash, provider, token0_amount, token1_amount, tick_lower, tick_upper, liquidity, log_index, timestamp)
+         SELECT t.event_type::liquidity_event_type, t.pool_address, t.tx_hash, t.provider, t.token0_amount, t.token1_amount, t.tick_lower, t.tick_upper, t.liquidity, t.log_index, t.ts
+         FROM UNNEST($1::TEXT[], $2::TEXT[], $3::TEXT[], $4::TEXT[], $5::NUMERIC[], $6::NUMERIC[], $7::INT[], $8::INT[], $9::NUMERIC[], $10::INT[], $11::TIMESTAMPTZ[])
+         AS t(event_type, pool_address, tx_hash, provider, token0_amount, token1_amount, tick_lower, tick_upper, liquidity, log_index, ts)
+         ON CONFLICT (tx_hash, log_index) DO NOTHING",
+    )
+    .bind(&event_types)
+    .bind(&pool_addresses)
+    .bind(&tx_hashes)
+    .bind(&providers)
+    .bind(&token0_amounts)
+    .bind(&token1_amounts)
+    .bind(&tick_lowers)
+    .bind(&tick_uppers)
+    .bind(&liquidities)
+    .bind(&log_indices)
+    .bind(&timestamps)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
 }
 
-/// 토큰 전송을 배치 INSERT한다.
+/// 토큰 전송을 UNNEST 배치 INSERT한다.
 #[tracing::instrument(skip(pool, transfers))]
 pub async fn insert_token_transfers(
     pool: &PgPool,
     transfers: &[TokenTransfer],
 ) -> Result<u64, DbError> {
-    let mut tx = pool.begin().await?;
-    let mut count = 0u64;
-
-    for t in transfers {
-        sqlx::query(
-            "INSERT INTO token_transfer (tx_hash, token_address, from_addr, to_addr, amount, log_index, timestamp)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
-             ON CONFLICT (tx_hash, log_index) DO NOTHING",
-        )
-        .bind(&t.tx_hash)
-        .bind(&t.token_address)
-        .bind(&t.from_addr)
-        .bind(&t.to_addr)
-        .bind(&t.amount)
-        .bind(t.log_index)
-        .bind(t.timestamp)
-        .execute(&mut *tx)
-        .await?;
-        count += 1;
+    if transfers.is_empty() {
+        return Ok(0);
     }
 
-    tx.commit().await?;
-    Ok(count)
+    let tx_hashes: Vec<&str> = transfers.iter().map(|t| t.tx_hash.as_str()).collect();
+    let token_addresses: Vec<&str> = transfers.iter().map(|t| t.token_address.as_str()).collect();
+    let from_addrs: Vec<&str> = transfers.iter().map(|t| t.from_addr.as_str()).collect();
+    let to_addrs: Vec<&str> = transfers.iter().map(|t| t.to_addr.as_str()).collect();
+    let amounts: Vec<&bigdecimal::BigDecimal> = transfers.iter().map(|t| &t.amount).collect();
+    let log_indices: Vec<i32> = transfers.iter().map(|t| t.log_index).collect();
+    let timestamps: Vec<DateTime<Utc>> = transfers.iter().map(|t| t.timestamp).collect();
+
+    let result = sqlx::query(
+        "INSERT INTO token_transfer (tx_hash, token_address, from_addr, to_addr, amount, log_index, timestamp)
+         SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::TEXT[], $4::TEXT[], $5::NUMERIC[], $6::INT[], $7::TIMESTAMPTZ[])
+         ON CONFLICT (tx_hash, log_index) DO NOTHING",
+    )
+    .bind(&tx_hashes)
+    .bind(&token_addresses)
+    .bind(&from_addrs)
+    .bind(&to_addrs)
+    .bind(&amounts)
+    .bind(&log_indices)
+    .bind(&timestamps)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
 }
 
-/// 실패한 트랜잭션을 INSERT한다.
+/// 실패한 트랜잭션을 UNNEST 배치 INSERT한다.
 #[tracing::instrument(skip(pool, failed))]
 pub async fn insert_failed_transactions(
     pool: &PgPool,
     failed: &[FailedTransaction],
 ) -> Result<u64, DbError> {
-    let mut tx = pool.begin().await?;
-    let mut count = 0u64;
-
-    for f in failed {
-        sqlx::query(
-            "INSERT INTO failed_transaction (tx_hash, error_category, revert_reason, failing_function, gas_used, timestamp)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (tx_hash) DO NOTHING",
-        )
-        .bind(&f.tx_hash)
-        .bind(&f.error_category)
-        .bind(&f.revert_reason)
-        .bind(&f.failing_function)
-        .bind(f.gas_used)
-        .bind(f.timestamp)
-        .execute(&mut *tx)
-        .await?;
-        count += 1;
+    if failed.is_empty() {
+        return Ok(0);
     }
 
-    tx.commit().await?;
-    Ok(count)
+    let tx_hashes: Vec<&str> = failed.iter().map(|f| f.tx_hash.as_str()).collect();
+    let categories: Vec<&str> = failed
+        .iter()
+        .map(|f| error_category_to_sql(&f.error_category))
+        .collect();
+    let revert_reasons: Vec<Option<&str>> =
+        failed.iter().map(|f| f.revert_reason.as_deref()).collect();
+    let failing_fns: Vec<Option<&str>> = failed
+        .iter()
+        .map(|f| f.failing_function.as_deref())
+        .collect();
+    let gas_useds: Vec<i64> = failed.iter().map(|f| f.gas_used).collect();
+    let timestamps: Vec<DateTime<Utc>> = failed.iter().map(|f| f.timestamp).collect();
+
+    let result = sqlx::query(
+        "INSERT INTO failed_transaction (tx_hash, error_category, revert_reason, failing_function, gas_used, timestamp)
+         SELECT t.tx_hash, t.cat::error_category, t.revert_reason, t.failing_fn, t.gas_used, t.ts
+         FROM UNNEST($1::TEXT[], $2::TEXT[], $3::TEXT[], $4::TEXT[], $5::BIGINT[], $6::TIMESTAMPTZ[])
+         AS t(tx_hash, cat, revert_reason, failing_fn, gas_used, ts)
+         ON CONFLICT (tx_hash) DO NOTHING",
+    )
+    .bind(&tx_hashes)
+    .bind(&categories)
+    .bind(&revert_reasons)
+    .bind(&failing_fns)
+    .bind(&gas_useds)
+    .bind(&timestamps)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
 }
 
-/// 가격 스냅샷을 INSERT한다.
+/// 가격 스냅샷을 UNNEST 배치 INSERT한다.
 #[tracing::instrument(skip(pool, snapshots))]
 pub async fn insert_price_snapshots(
     pool: &PgPool,
     snapshots: &[PriceSnapshot],
 ) -> Result<u64, DbError> {
-    let mut tx = pool.begin().await?;
-    let mut count = 0u64;
-
-    for s in snapshots {
-        sqlx::query(
-            "INSERT INTO price_snapshot (pool_address, price, tick, liquidity, snapshot_ts, interval_type)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (pool_address, snapshot_ts, interval_type) DO NOTHING",
-        )
-        .bind(&s.pool_address)
-        .bind(&s.price)
-        .bind(s.tick)
-        .bind(&s.liquidity)
-        .bind(s.snapshot_ts)
-        .bind(&s.interval_type)
-        .execute(&mut *tx)
-        .await?;
-        count += 1;
+    if snapshots.is_empty() {
+        return Ok(0);
     }
 
-    tx.commit().await?;
-    Ok(count)
+    let pool_addresses: Vec<&str> = snapshots.iter().map(|s| s.pool_address.as_str()).collect();
+    let prices: Vec<&bigdecimal::BigDecimal> = snapshots.iter().map(|s| &s.price).collect();
+    let ticks: Vec<i32> = snapshots.iter().map(|s| s.tick).collect();
+    let liquidities: Vec<&bigdecimal::BigDecimal> =
+        snapshots.iter().map(|s| &s.liquidity).collect();
+    let snapshot_tss: Vec<DateTime<Utc>> = snapshots.iter().map(|s| s.snapshot_ts).collect();
+    let intervals: Vec<&str> = snapshots
+        .iter()
+        .map(|s| snapshot_interval_to_sql(&s.interval_type))
+        .collect();
+
+    let result = sqlx::query(
+        "INSERT INTO price_snapshot (pool_address, price, tick, liquidity, snapshot_ts, interval_type)
+         SELECT t.pool_address, t.price, t.tick, t.liquidity, t.snapshot_ts, t.interval::snapshot_interval
+         FROM UNNEST($1::TEXT[], $2::NUMERIC[], $3::INT[], $4::NUMERIC[], $5::TIMESTAMPTZ[], $6::TEXT[])
+         AS t(pool_address, price, tick, liquidity, snapshot_ts, interval)
+         ON CONFLICT (pool_address, snapshot_ts, interval_type) DO NOTHING",
+    )
+    .bind(&pool_addresses)
+    .bind(&prices)
+    .bind(&ticks)
+    .bind(&liquidities)
+    .bind(&snapshot_tss)
+    .bind(&intervals)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
 }
 
-/// 유저 프로필을 UPSERT한다.
+/// 유저 프로필을 UNNEST 배치 UPSERT한다.
 #[tracing::instrument(skip(pool, profiles))]
 pub async fn upsert_user_profiles(pool: &PgPool, profiles: &[UserProfile]) -> Result<u64, DbError> {
-    let mut tx = pool.begin().await?;
-    let mut count = 0u64;
-
-    for u in profiles {
-        sqlx::query(
-            "INSERT INTO user_profile (user_address, label, first_seen, last_seen, total_swaps, total_volume_usd)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (user_address) DO UPDATE SET
-                 last_seen = EXCLUDED.last_seen,
-                 total_swaps = user_profile.total_swaps + EXCLUDED.total_swaps,
-                 total_volume_usd = user_profile.total_volume_usd + EXCLUDED.total_volume_usd",
-        )
-        .bind(&u.user_address)
-        .bind(&u.label)
-        .bind(u.first_seen)
-        .bind(u.last_seen)
-        .bind(u.total_swaps)
-        .bind(&u.total_volume_usd)
-        .execute(&mut *tx)
-        .await?;
-        count += 1;
+    if profiles.is_empty() {
+        return Ok(0);
     }
 
-    tx.commit().await?;
-    Ok(count)
+    let addresses: Vec<&str> = profiles.iter().map(|u| u.user_address.as_str()).collect();
+    let labels: Vec<Option<&str>> = profiles.iter().map(|u| u.label.as_deref()).collect();
+    let first_seens: Vec<DateTime<Utc>> = profiles.iter().map(|u| u.first_seen).collect();
+    let last_seens: Vec<DateTime<Utc>> = profiles.iter().map(|u| u.last_seen).collect();
+    let total_swaps: Vec<i32> = profiles.iter().map(|u| u.total_swaps).collect();
+    let total_volumes: Vec<&bigdecimal::BigDecimal> =
+        profiles.iter().map(|u| &u.total_volume_usd).collect();
+
+    let result = sqlx::query(
+        "INSERT INTO user_profile (user_address, label, first_seen, last_seen, total_swaps, total_volume_usd)
+         SELECT * FROM UNNEST($1::TEXT[], $2::TEXT[], $3::TIMESTAMPTZ[], $4::TIMESTAMPTZ[], $5::INT[], $6::NUMERIC[])
+         ON CONFLICT (user_address) DO UPDATE SET
+             last_seen = EXCLUDED.last_seen,
+             total_swaps = user_profile.total_swaps + EXCLUDED.total_swaps,
+             total_volume_usd = user_profile.total_volume_usd + EXCLUDED.total_volume_usd",
+    )
+    .bind(&addresses)
+    .bind(&labels)
+    .bind(&first_seens)
+    .bind(&last_seens)
+    .bind(&total_swaps)
+    .bind(&total_volumes)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
 }
 
-/// 트레이스 로그를 배치 INSERT한다.
+/// 트레이스 로그를 UNNEST 배치 INSERT한다.
 #[tracing::instrument(skip(pool, traces))]
 pub async fn insert_trace_logs(pool: &PgPool, traces: &[TraceLog]) -> Result<u64, DbError> {
-    let mut tx = pool.begin().await?;
-    let mut count = 0u64;
-
-    for t in traces {
-        sqlx::query(
-            "INSERT INTO trace_log (tx_hash, call_depth, call_type, from_addr, to_addr, value, gas_used, input, output, error)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-        )
-        .bind(&t.tx_hash)
-        .bind(t.call_depth)
-        .bind(&t.call_type)
-        .bind(&t.from_addr)
-        .bind(&t.to_addr)
-        .bind(&t.value)
-        .bind(t.gas_used)
-        .bind(&t.input)
-        .bind(&t.output)
-        .bind(&t.error)
-        .execute(&mut *tx)
-        .await?;
-        count += 1;
+    if traces.is_empty() {
+        return Ok(0);
     }
 
-    tx.commit().await?;
-    Ok(count)
+    let tx_hashes: Vec<&str> = traces.iter().map(|t| t.tx_hash.as_str()).collect();
+    let call_depths: Vec<i32> = traces.iter().map(|t| t.call_depth).collect();
+    let call_types: Vec<&str> = traces.iter().map(|t| t.call_type.as_str()).collect();
+    let from_addrs: Vec<&str> = traces.iter().map(|t| t.from_addr.as_str()).collect();
+    let to_addrs: Vec<Option<&str>> = traces.iter().map(|t| t.to_addr.as_deref()).collect();
+    let values: Vec<&bigdecimal::BigDecimal> = traces.iter().map(|t| &t.value).collect();
+    let gas_useds: Vec<i64> = traces.iter().map(|t| t.gas_used).collect();
+    let inputs: Vec<Option<&str>> = traces.iter().map(|t| t.input.as_deref()).collect();
+    let outputs: Vec<Option<&str>> = traces.iter().map(|t| t.output.as_deref()).collect();
+    let errors: Vec<Option<&str>> = traces.iter().map(|t| t.error.as_deref()).collect();
+
+    let result = sqlx::query(
+        "INSERT INTO trace_log (tx_hash, call_depth, call_type, from_addr, to_addr, value, gas_used, input, output, error)
+         SELECT * FROM UNNEST($1::TEXT[], $2::INT[], $3::TEXT[], $4::TEXT[], $5::TEXT[], $6::NUMERIC[], $7::BIGINT[], $8::TEXT[], $9::TEXT[], $10::TEXT[])",
+    )
+    .bind(&tx_hashes)
+    .bind(&call_depths)
+    .bind(&call_types)
+    .bind(&from_addrs)
+    .bind(&to_addrs)
+    .bind(&values)
+    .bind(&gas_useds)
+    .bind(&inputs)
+    .bind(&outputs)
+    .bind(&errors)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
 }
 
 /// 특정 체인의 마지막 체크포인트를 조회한다.
