@@ -108,6 +108,7 @@ impl WorkerPool {
         provider: &impl Provider,
         block_number: u64,
     ) -> anyhow::Result<()> {
+        let start = std::time::Instant::now();
         tracing::debug!(block_number, "processing block");
 
         // 1. 블록 + 영수증 병렬 조회 (with retry)
@@ -249,13 +250,14 @@ impl WorkerPool {
             );
         }
 
-        tracing::debug!(
+        tracing::info!(
             block_number,
             txs = transactions.len(),
             swaps = swap_events.len(),
             liq = liquidity_events.len(),
             transfers = token_transfers.len(),
-            "block processed"
+            duration_ms = start.elapsed().as_millis() as u64,
+            "block_processed"
         );
         Ok(())
     }

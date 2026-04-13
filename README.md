@@ -4,7 +4,7 @@
 
 **High-performance Ethereum DeFi transaction indexer built with Rust**
 
-Collects, decodes, and stores Uniswap V3 events into PostgreSQL — in real time.
+Collects, decodes, and stores Uniswap V3 events from historical block ranges into PostgreSQL.
 
 [![Rust](https://img.shields.io/badge/Rust-2021_edition-f74c00?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
@@ -19,7 +19,10 @@ Collects, decodes, and stores Uniswap V3 events into PostgreSQL — in real time
 
 - **Concurrent block processing** — Tokio-based worker pool with semaphore-controlled parallelism
 - **Full ABI decoding** — Swap, Mint, Burn, Transfer events with typed structs via alloy
-- **Transaction tracing** — `debug_traceTransaction` parsing for revert reasons and internal call trees
+- **Transaction tracing** — `debug_traceTransaction` for revert reasons, error classification, and call trees
+- **True batch INSERT** — PostgreSQL UNNEST pattern for single-statement bulk inserts
+- **Crash recovery** — Checkpoint-based resumption from last processed block
+- **RPC resilience** — Exponential backoff retry with parallel block+receipt fetching
 - **Compile-time SQL validation** — sqlx ensures query correctness at build time
 - **Comprehensive SQL layer** — DDL, views, stored procedures, triggers, OLAP queries, and row-level security
 
@@ -30,7 +33,8 @@ Ethereum Node (RPC)
   -> [indexer] Block & receipt collection (concurrent, chunked)
   -> [decoder] Raw logs -> typed structs (SwapEvent, LiquidityEvent, ...)
   -> [decoder::trace] debug_traceTransaction -> revert reasons & call tree
-  -> [db] sqlx batch INSERT -> PostgreSQL
+  -> [decoder::classifier] revert reason -> ErrorCategory mapping
+  -> [db] sqlx UNNEST batch INSERT -> PostgreSQL
   -> [sql/views] Analytical views & aggregations
 ```
 
@@ -57,6 +61,8 @@ Standalone SQL scripts organized by category: `ddl/`, `dml/`, `queries/`, `proce
 | Serialization | serde + serde_json |
 | Logging | tracing + tracing-subscriber |
 | Error Handling | thiserror (libraries) / anyhow (binary) |
+| CLI | clap (derive) |
+| Resilience | backoff (exponential retry) |
 | Database | PostgreSQL 16+ |
 
 ## Getting Started
@@ -83,6 +89,9 @@ sqlx migrate run
 
 ```bash
 cargo build --release
+
+# Show CLI help
+cargo run -p indexer -- --help
 
 # Index blocks 18,000,000 ~ 18,001,000
 cargo run -p indexer -- --from-block 18000000 --to-block 18001000
