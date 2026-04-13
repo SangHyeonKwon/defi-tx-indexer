@@ -132,8 +132,6 @@ impl WorkerPool {
         let mut liquidity_events: Vec<LiquidityEvent> = Vec::new();
         let mut token_transfers: Vec<TokenTransfer> = Vec::new();
 
-        let mut global_log_index: i32 = 0;
-
         for (idx, receipt) in receipts.iter().enumerate() {
             let tx_hash_str = format!("0x{:x}", receipt.transaction_hash);
 
@@ -165,19 +163,19 @@ impl WorkerPool {
                 let log_data = log.data();
                 let topics = log_data.topics().to_vec();
                 if topics.is_empty() {
-                    global_log_index += 1;
                     continue;
                 }
 
                 let data = &log_data.data;
                 let log_address = format!("{}", log.address()).to_lowercase();
+                let log_idx = log.log_index.unwrap_or(0) as i32;
 
                 match decoder::events::decode_log(
                     &topics,
                     data,
                     &log_address,
                     &tx_hash_str,
-                    global_log_index,
+                    log_idx,
                     timestamp,
                 ) {
                     Ok(DecodedEvent::Swap(s)) => swap_events.push(to_swap_model(s)),
@@ -192,8 +190,6 @@ impl WorkerPool {
                         tracing::warn!(block_number, error = %e, "failed to decode log");
                     }
                 }
-
-                global_log_index += 1;
             }
         }
 
