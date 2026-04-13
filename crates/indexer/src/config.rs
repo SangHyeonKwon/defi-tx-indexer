@@ -54,7 +54,10 @@ impl Config {
             to_block: None,
             max_concurrent_blocks,
             batch_size,
-            max_db_connections: 10,
+            max_db_connections: env::var("MAX_DB_CONNECTIONS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(10),
         })
     }
 
