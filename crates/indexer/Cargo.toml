@@ -26,3 +26,4 @@ chrono.workspace = true
 bigdecimal.workspace = true
 hex.workspace = true
 backoff.workspace = true
+clap.workspace = true

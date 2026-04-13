@@ -10,10 +10,27 @@
 mod config;
 mod worker;
 
+use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
 use crate::worker::WorkerPool;
+
+/// Uniswap V3 DeFi transaction indexer.
+///
+/// Collects, decodes, and stores Uniswap V3 events from the Ethereum
+/// blockchain into PostgreSQL.
+#[derive(Parser)]
+#[command(name = "indexer", version, about)]
+struct Cli {
+    /// Start block number (inclusive)
+    #[arg(long)]
+    from_block: u64,
+
+    /// End block number (inclusive, defaults to from_block)
+    #[arg(long)]
+    to_block: Option<u64>,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -24,8 +41,9 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("starting DeFi Analytics indexer");
 
-    // 설정 로드
-    let config = parse_args()?;
+    // CLI + 환경변수 설정 로드
+    let cli = Cli::parse();
+    let config = Config::from_env()?.with_block_range(cli.from_block, cli.to_block);
     tracing::info!(?config, "configuration loaded");
 
     // DB 연결 + 마이그레이션
@@ -65,44 +83,4 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("indexer finished successfully");
     Ok(())
-}
-
-/// CLI 인자를 파싱한다.
-///
-/// `--from-block <N>` 와 `--to-block <N>` 을 지원한다.
-fn parse_args() -> anyhow::Result<Config> {
-    let args: Vec<String> = std::env::args().collect();
-    let config = Config::from_env()?;
-
-    let mut from_block = None;
-    let mut to_block = None;
-
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--from-block" => {
-                i += 1;
-                from_block = Some(
-                    args.get(i)
-                        .ok_or_else(|| anyhow::anyhow!("--from-block requires a value"))?
-                        .parse::<u64>()?,
-                );
-            }
-            "--to-block" => {
-                i += 1;
-                to_block = Some(
-                    args.get(i)
-                        .ok_or_else(|| anyhow::anyhow!("--to-block requires a value"))?
-                        .parse::<u64>()?,
-                );
-            }
-            other => {
-                anyhow::bail!("unknown argument: {other}");
-            }
-        }
-        i += 1;
-    }
-
-    let from = from_block.ok_or_else(|| anyhow::anyhow!("--from-block is required"))?;
-    Ok(config.with_block_range(from, to_block))
 }
