@@ -4,14 +4,17 @@ use std::sync::Arc;
 use alloy::consensus::Transaction as ConsensusTx;
 use alloy::eips::BlockNumberOrTag;
 use alloy::network::TransactionResponse;
+use alloy::providers::ext::DebugApi;
 use alloy::providers::{Provider, ProviderBuilder};
+use alloy::rpc::types::trace::geth::{GethDebugTracingOptions, GethTrace};
 use bigdecimal::BigDecimal;
 use chrono::DateTime;
 use sqlx::PgPool;
 use tokio::sync::Semaphore;
 
 use db::models::{
-    Block, LiquidityEvent, LiquidityEventType, SwapEvent, TokenTransfer, Transaction,
+    Block, ErrorCategory, FailedTransaction, LiquidityEvent, LiquidityEventType, SwapEvent,
+    TokenTransfer, TraceLog, Transaction,
 };
 use decoder::events::{DecodedEvent, DecodedLiquidity, DecodedSwap, DecodedTransfer};
 
@@ -211,6 +214,32 @@ impl WorkerPool {
             db::queries::insert_token_transfers(db_pool, &token_transfers).await?;
         }
 
+        // 6. 실패한 트랜잭션 trace 수집
+        let failed_tx_hashes: Vec<String> = receipts
+            .iter()
+            .filter(|r| !r.status())
+            .map(|r| format!("0x{:x}", r.transaction_hash))
+            .collect();
+
+        if !failed_tx_hashes.is_empty() {
+            let (trace_logs, failed_txs) =
+                Self::process_failed_txs(provider, &failed_tx_hashes, timestamp).await;
+
+            if !trace_logs.is_empty() {
+                db::queries::insert_trace_logs(db_pool, &trace_logs).await?;
+            }
+            if !failed_txs.is_empty() {
+                db::queries::insert_failed_transactions(db_pool, &failed_txs).await?;
+            }
+
+            tracing::debug!(
+                block_number,
+                failed_txs = failed_tx_hashes.len(),
+                traces = trace_logs.len(),
+                "traces processed"
+            );
+        }
+
         tracing::debug!(
             block_number,
             txs = transactions.len(),
@@ -220,6 +249,127 @@ impl WorkerPool {
             "block processed"
         );
         Ok(())
+    }
+
+    /// 실패한 트랜잭션들의 trace를 수집·디코딩한다.
+    async fn process_failed_txs(
+        provider: &impl Provider,
+        tx_hashes: &[String],
+        timestamp: DateTime<chrono::Utc>,
+    ) -> (Vec<TraceLog>, Vec<FailedTransaction>) {
+        let mut trace_logs = Vec::new();
+        let mut failed_txs = Vec::new();
+
+        let trace_opts = GethDebugTracingOptions::call_tracer(Default::default());
+
+        for tx_hash_str in tx_hashes {
+            let tx_hash = match tx_hash_str.parse() {
+                Ok(h) => h,
+                Err(_) => continue,
+            };
+
+            // debug_traceTransaction 호출
+            let trace_result = match provider
+                .debug_trace_transaction(tx_hash, trace_opts.clone())
+                .await
+            {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!(tx_hash = %tx_hash_str, error = %e, "failed to trace tx");
+                    continue;
+                }
+            };
+
+            // GethTrace → JSON → parse_trace
+            let trace_json = match &trace_result {
+                GethTrace::CallTracer(frame) => match serde_json::to_value(frame) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                },
+                _ => continue,
+            };
+
+            let flattened = match decoder::trace::parse_trace(tx_hash_str, &trace_json) {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::warn!(tx_hash = %tx_hash_str, error = %e, "failed to parse trace");
+                    continue;
+                }
+            };
+
+            // FlatFrame → TraceLog 모델 변환
+            for frame in &flattened.frames {
+                trace_logs.push(TraceLog {
+                    tx_hash: tx_hash_str.clone(),
+                    call_depth: frame.depth,
+                    call_type: frame.call_type.clone(),
+                    from_addr: frame.from.clone(),
+                    to_addr: frame.to.clone(),
+                    value: BigDecimal::from_str(&frame.value)
+                        .unwrap_or_else(|_| BigDecimal::from(0)),
+                    gas_used: frame.gas_used,
+                    input: frame.input.clone(),
+                    output: frame.output.clone(),
+                    error: frame.error.clone(),
+                    trace_id: 0,
+                });
+            }
+
+            // 루트 프레임에서 revert reason 추출
+            let (revert_reason, error_category) = if let Some(root) = flattened.frames.first() {
+                let reason = root
+                    .output
+                    .as_ref()
+                    .and_then(|o| {
+                        let hex = o.strip_prefix("0x").unwrap_or(o);
+                        hex::decode(hex).ok()
+                    })
+                    .and_then(|bytes| decoder::trace::decode_revert_reason(&bytes).ok());
+
+                let category = reason
+                    .as_deref()
+                    .map(decoder::classifier::classify_error)
+                    .unwrap_or("UNKNOWN");
+
+                (reason, category)
+            } else {
+                (None, "UNKNOWN")
+            };
+
+            let category = match error_category {
+                "INSUFFICIENT_BALANCE" => ErrorCategory::InsufficientBalance,
+                "SLIPPAGE_EXCEEDED" => ErrorCategory::SlippageExceeded,
+                "DEADLINE_EXPIRED" => ErrorCategory::DeadlineExpired,
+                "UNAUTHORIZED" => ErrorCategory::Unauthorized,
+                "TRANSFER_FAILED" => ErrorCategory::TransferFailed,
+                _ => ErrorCategory::Unknown,
+            };
+
+            // 루트 프레임의 input에서 function selector 추출
+            let failing_function = flattened
+                .frames
+                .first()
+                .and_then(|f| f.input.as_ref())
+                .and_then(|input| {
+                    let hex = input.strip_prefix("0x").unwrap_or(input);
+                    if hex.len() >= 8 {
+                        Some(format!("0x{}", &hex[..8]))
+                    } else {
+                        None
+                    }
+                });
+
+            failed_txs.push(FailedTransaction {
+                tx_hash: tx_hash_str.clone(),
+                error_category: category,
+                revert_reason,
+                failing_function,
+                gas_used: flattened.frames.first().map(|f| f.gas_used).unwrap_or(0),
+                timestamp,
+            });
+        }
+
+        (trace_logs, failed_txs)
     }
 }
 
