@@ -1,0 +1,60 @@
+services:
+  # ── PostgreSQL ─────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: defi
+      POSTGRES_PASSWORD: defi
+      POSTGRES_DB: defi_analytics
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U defi -d defi_analytics"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── REST API Server ────────────────────────────────────────────
+  api:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://defi:defi@postgres:5432/defi_analytics
+      API_HOST: 0.0.0.0
+      API_PORT: "3000"
+      MAX_DB_CONNECTIONS: "10"
+      RUST_LOG: api=info,db=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── Seed (demo data, run manually) ────────────────────────────
+  seed:
+    image: postgres:16-alpine
+    profiles: ["seed"]
+    environment:
+      PGPASSWORD: defi
+    volumes:
+      - ./sql:/sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - |
+        echo "Applying views..." &&
+        psql -h postgres -U defi -d defi_analytics -f /sql/views/001_views.sql &&
+        echo "Applying procedures..." &&
+        psql -h postgres -U defi -d defi_analytics -f /sql/procedures/001_procedures.sql &&
+        echo "Applying triggers..." &&
+        psql -h postgres -U defi -d defi_analytics -f /sql/triggers/001_triggers.sql &&
+        echo "Loading seed data..." &&
+        psql -h postgres -U defi -d defi_analytics -f /sql/dml/001_seed_data.sql &&
+        echo "Done — seed data loaded successfully"
+
+volumes:
+  pgdata:
