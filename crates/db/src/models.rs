@@ -290,3 +290,73 @@ pub struct TraceLog {
     /// 자동 생성 ID
     pub trace_id: i64,
 }
+
+// ============================================
+// 뷰 기반 모델 (API 응답용)
+// ============================================
+
+/// 일별 풀별 스왑 볼륨 (vw_daily_swap_volume).
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct DailySwapVolume {
+    /// 풀 주소
+    pub pool_address: String,
+    /// 풀 페어 이름
+    pub pair_name: String,
+    /// 스왑 날짜
+    pub swap_date: chrono::NaiveDate,
+    /// 스왑 건수
+    pub swap_count: i64,
+    /// 총 유입량
+    pub total_amount_in: BigDecimal,
+    /// 총 유출량
+    pub total_amount_out: BigDecimal,
+}
+
+/// 트레이더 랭킹 (vw_top_traders).
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct TopTrader {
+    /// 트레이더 주소
+    pub user_address: String,
+    /// 사용자 라벨 (whale, bot, retail)
+    pub label: Option<String>,
+    /// 총 스왑 횟수
+    pub total_swaps: i32,
+    /// 총 거래량 (USD)
+    pub total_volume_usd: BigDecimal,
+    /// 거래량 기준 순위
+    pub volume_rank: i64,
+}
+
+/// 실패 TX 카테고리별 분석 (vw_failed_tx_analysis).
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct FailedTxAnalysis {
+    /// 에러 카테고리
+    pub error_category: ErrorCategory,
+    /// 실패 건수
+    pub failure_count: i64,
+    /// 평균 낭비 가스
+    pub avg_gas_wasted: BigDecimal,
+    /// 전체 대비 비율 (%)
+    pub pct_of_total: BigDecimal,
+    /// 가장 최근 실패 시각
+    pub most_recent_failure: DateTime<Utc>,
+}
+
+/// 풀 종합 통계 (fn_get_pool_stats).
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct PoolStats {
+    /// 페어 이름
+    pub pair_name: String,
+    /// 스왑 건수
+    pub swap_count: i64,
+    /// 고유 트레이더 수
+    pub unique_traders: i64,
+    /// 총 유입 볼륨
+    pub total_volume_in: BigDecimal,
+    /// 평균 거래 크기
+    pub avg_trade_size: BigDecimal,
+    /// 유동성 이벤트 수
+    pub liquidity_events: i64,
+    /// 추정 수수료 수익
+    pub estimated_fees: BigDecimal,
+}
