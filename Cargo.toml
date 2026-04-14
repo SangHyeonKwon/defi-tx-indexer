@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/api",
     "crates/db",
     "crates/decoder",
     "crates/indexer",
@@ -51,3 +52,7 @@ backoff = { version = "0.4", features = ["tokio"] }
 
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
+
+# Web
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
