@@ -69,7 +69,22 @@ Standalone SQL scripts organized by category: `ddl/`, `dml/`, `queries/`, `proce
 | Resilience | backoff (exponential retry) |
 | Database | PostgreSQL 16+ |
 
-## Getting Started
+## Quick Start (Docker)
+
+```bash
+# Start PostgreSQL + API server
+docker compose up -d
+
+# Load demo data (views, procedures, seed data)
+docker compose run --rm seed
+
+# Verify
+curl http://localhost:3000/health
+curl http://localhost:3000/v1/pools
+curl http://localhost:3000/v1/traders/top
+```
+
+## Getting Started (Local)
 
 ### Prerequisites
 
