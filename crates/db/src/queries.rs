@@ -3,9 +3,9 @@ use sqlx::PgPool;
 
 use crate::error::DbError;
 use crate::models::{
-    Block, ErrorCategory, FailedTransaction, LiquidityEvent, LiquidityEventType, Pool,
-    PriceSnapshot, SnapshotInterval, SwapEvent, Token, TokenTransfer, TraceLog, Transaction,
-    UserProfile,
+    Block, DailySwapVolume, ErrorCategory, FailedTransaction, FailedTxAnalysis, LiquidityEvent,
+    LiquidityEventType, Pool, PoolStats, PriceSnapshot, SnapshotInterval, SwapEvent, Token,
+    TokenTransfer, TopTrader, TraceLog, Transaction, UserProfile,
 };
 
 /// PostgreSQL enum 값으로 변환하는 헬퍼.
@@ -455,6 +455,138 @@ pub async fn insert_trace_logs(pool: &PgPool, traces: &[TraceLog]) -> Result<u64
 
     Ok(result.rows_affected())
 }
+
+// ============================================
+// API용 읽기 쿼리
+// ============================================
+
+/// 풀 목록을 페이지네이션하여 조회한다.
+#[tracing::instrument(skip(pool))]
+pub async fn list_pools(pool: &PgPool, limit: i64, offset: i64) -> Result<Vec<Pool>, DbError> {
+    let pools =
+        sqlx::query_as::<_, Pool>("SELECT * FROM pool ORDER BY created_at DESC LIMIT $1 OFFSET $2")
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
+    Ok(pools)
+}
+
+/// 주소로 단일 풀을 조회한다.
+#[tracing::instrument(skip(pool))]
+pub async fn get_pool_by_address(pool: &PgPool, address: &str) -> Result<Pool, DbError> {
+    sqlx::query_as::<_, Pool>("SELECT * FROM pool WHERE pool_address = $1")
+        .bind(address)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| DbError::NotFound(format!("pool {address}")))
+}
+
+/// 토큰 목록을 페이지네이션하여 조회한다.
+#[tracing::instrument(skip(pool))]
+pub async fn list_tokens(pool: &PgPool, limit: i64, offset: i64) -> Result<Vec<Token>, DbError> {
+    let tokens =
+        sqlx::query_as::<_, Token>("SELECT * FROM token ORDER BY symbol LIMIT $1 OFFSET $2")
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
+    Ok(tokens)
+}
+
+/// 주소로 단일 토큰을 조회한다.
+#[tracing::instrument(skip(pool))]
+pub async fn get_token_by_address(pool: &PgPool, address: &str) -> Result<Token, DbError> {
+    sqlx::query_as::<_, Token>("SELECT * FROM token WHERE token_address = $1")
+        .bind(address)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| DbError::NotFound(format!("token {address}")))
+}
+
+/// 스왑 이벤트를 풀 필터 + 페이지네이션으로 조회한다.
+#[tracing::instrument(skip(pool))]
+pub async fn list_swap_events(
+    pool: &PgPool,
+    pool_address: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<SwapEvent>, DbError> {
+    let events = sqlx::query_as::<_, SwapEvent>(
+        "SELECT * FROM swap_event
+         WHERE ($1::TEXT IS NULL OR pool_address = $1)
+         ORDER BY timestamp DESC
+         LIMIT $2 OFFSET $3",
+    )
+    .bind(pool_address)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    Ok(events)
+}
+
+/// 일별 스왑 볼륨을 조회한다 (vw_daily_swap_volume).
+#[tracing::instrument(skip(pool))]
+pub async fn get_daily_swap_volume(
+    pool: &PgPool,
+    pool_address: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<DailySwapVolume>, DbError> {
+    let rows = sqlx::query_as::<_, DailySwapVolume>(
+        "SELECT * FROM vw_daily_swap_volume
+         WHERE ($1::TEXT IS NULL OR pool_address = $1)
+         ORDER BY swap_date DESC
+         LIMIT $2 OFFSET $3",
+    )
+    .bind(pool_address)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// 트레이더 랭킹을 조회한다 (vw_top_traders).
+#[tracing::instrument(skip(pool))]
+pub async fn get_top_traders(pool: &PgPool, limit: i64) -> Result<Vec<TopTrader>, DbError> {
+    let traders = sqlx::query_as::<_, TopTrader>("SELECT * FROM vw_top_traders LIMIT $1")
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+    Ok(traders)
+}
+
+/// 실패 TX 카테고리별 분석을 조회한다 (vw_failed_tx_analysis).
+#[tracing::instrument(skip(pool))]
+pub async fn get_failed_tx_analysis(pool: &PgPool) -> Result<Vec<FailedTxAnalysis>, DbError> {
+    let rows = sqlx::query_as::<_, FailedTxAnalysis>("SELECT * FROM vw_failed_tx_analysis")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows)
+}
+
+/// 풀 종합 통계를 조회한다 (fn_get_pool_stats).
+#[tracing::instrument(skip(pool))]
+pub async fn get_pool_stats(
+    pool: &PgPool,
+    pool_address: &str,
+    from_date: DateTime<Utc>,
+    to_date: DateTime<Utc>,
+) -> Result<PoolStats, DbError> {
+    sqlx::query_as::<_, PoolStats>("SELECT * FROM fn_get_pool_stats($1, $2, $3)")
+        .bind(pool_address)
+        .bind(from_date)
+        .bind(to_date)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| DbError::NotFound(format!("pool stats for {pool_address}")))
+}
+
+// ============================================
+// 인덱서용 체크포인트 쿼리
+// ============================================
 
 /// 특정 체인의 마지막 체크포인트를 조회한다.
 #[tracing::instrument(skip(pool))]

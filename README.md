@@ -23,6 +23,7 @@ Collects, decodes, and stores Uniswap V3 events from historical block ranges int
 - **True batch INSERT** — PostgreSQL UNNEST pattern for single-statement bulk inserts
 - **Crash recovery** — Checkpoint-based resumption from last processed block
 - **RPC resilience** — Exponential backoff retry with parallel block+receipt fetching
+- **REST API** — axum-based JSON API with pagination, error handling, and CORS
 - **Compile-time SQL validation** — sqlx ensures query correctness at build time
 - **Comprehensive SQL layer** — DDL, views, stored procedures, triggers, OLAP queries, and row-level security
 
@@ -35,6 +36,7 @@ Ethereum Node (RPC)
   -> [decoder::trace] debug_traceTransaction -> revert reasons & call tree
   -> [decoder::classifier] revert reason -> ErrorCategory mapping
   -> [db] sqlx UNNEST batch INSERT -> PostgreSQL
+  -> [api] axum REST API -> JSON responses
   -> [sql/views] Analytical views & aggregations
 ```
 
@@ -43,6 +45,7 @@ Ethereum Node (RPC)
 | Crate | Type | Role |
 |-------|------|------|
 | `crates/indexer/` | Binary | Block collection & orchestration (config, worker pool) |
+| `crates/api/` | Binary | REST API server (axum, read-only endpoints) |
 | `crates/decoder/` | Library | ABI decoding & event parsing (Swap, Mint/Burn, trace) |
 | `crates/db/` | Library | SQLx-based DB interactions (models, queries, migrations) |
 
@@ -61,6 +64,7 @@ Standalone SQL scripts organized by category: `ddl/`, `dml/`, `queries/`, `proce
 | Serialization | serde + serde_json |
 | Logging | tracing + tracing-subscriber |
 | Error Handling | thiserror (libraries) / anyhow (binary) |
+| Web Framework | axum 0.8 + tower-http |
 | CLI | clap (derive) |
 | Resilience | backoff (exponential retry) |
 | Database | PostgreSQL 16+ |
@@ -95,6 +99,34 @@ cargo run -p indexer -- --help
 
 # Index blocks 18,000,000 ~ 18,001,000
 cargo run -p indexer -- --from-block 18000000 --to-block 18001000
+
+# Start the API server (default port 3000)
+cargo run -p api
+```
+
+### API Endpoints
+
+```bash
+# Health check
+curl http://localhost:3000/health
+
+# Blocks
+curl http://localhost:3000/v1/blocks/latest
+curl http://localhost:3000/v1/blocks/18000000
+
+# Pools & tokens
+curl "http://localhost:3000/v1/pools?limit=10"
+curl http://localhost:3000/v1/pools/0x8ad599c3a0ff1de082011efddc58f1908eb6e6d8
+curl "http://localhost:3000/v1/pools/0x.../stats?from_date=2023-09-01T00:00:00Z&to_date=2023-09-30T00:00:00Z"
+curl "http://localhost:3000/v1/tokens?limit=10"
+
+# Swaps (filterable by pool)
+curl "http://localhost:3000/v1/swaps?pool_address=0x...&limit=20"
+
+# Analytics
+curl http://localhost:3000/v1/traders/top?limit=10
+curl http://localhost:3000/v1/analytics/daily-volume
+curl http://localhost:3000/v1/analytics/failed-tx
 ```
 
 ### Test & Lint
