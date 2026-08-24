@@ -131,6 +131,9 @@ psql $DATABASE_URL -f sql/full_script.sql
 
 ### Git
 
-- **브랜치**: `feat/xxx`, `fix/xxx`, `sql/xxx`, `docs/xxx`
-- **커밋**: `type(scope): 메시지` — scope: `indexer`, `decoder`, `db`, `sql`, `docs`, `ci`
+- **브랜치**: `feat/`, `fix/`, `test/`, `sql/`, `docs/`, `chore/`, `ci/` 접두사 권장 — 설명적인 kebab-case면 접두사 없는 이름도 허용 (예: `project-health-check`)
+- **커밋**: `type(scope): 메시지` — 문맥상 명확하면 scope 생략 가능
+  - type: `feat`, `fix`, `test`, `perf`, `refactor`, `docs`, `chore`, `ci` + SQL 제출 스크립트 전용 `sql`
+  - scope: 크레이트·디렉토리 이름 — `indexer`, `decoder`, `db`, `api`, `tui`, `web`, `sql`, `docs`, `ci`, `scripts`. 복수는 콤마(`fix(indexer,decoder)`), `sql` type엔 하위 영역(`sql(views)`, `sql(ddl)` 등)
+- **기존 히스토리에 소급 적용하지 않음** — 컨벤션 위반을 이유로 한 히스토리 rewrite 금지
 - **커밋 단위**: 논리적 변경 하나 — SQL과 Rust를 같은 커밋에 섞지 않기

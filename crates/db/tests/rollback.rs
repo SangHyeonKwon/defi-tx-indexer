@@ -4,6 +4,11 @@
 //! FORK는 시드 최대 블록(~18,000,002)보다 **확실히 위**여야 한다 — rollback은
 //! `block_number >= FORK`를 지우므로 FORK가 시드보다 낮으면 시드까지 삭제된다.
 //! 공유 dev DB 위생을 위해 체크포인트는 원복한다.
+//!
+//! 블록 밴드 맵: 시드 ~18M / alert_rate 97.0M / labels 97.5M / alerts 98M /
+//! **rollback 99M**. 본 파일은 반드시 **최상위 밴드**를 유지해야 하며
+//! `rollback_from_block`을 쓰는 유일한 테스트여야 한다 — ≥FORK 전역 삭제라
+//! 아래 밴드에서 호출하면 병렬 실행 시 다른 바이너리 픽스처를 지운다.
 
 use db::error::DbError;
 use db::models::{Block, ErrorCategory, FailedTransaction, TraceLog, Transaction};

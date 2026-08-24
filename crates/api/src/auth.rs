@@ -28,8 +28,8 @@ const BEARER_PREFIX: &str = "Bearer ";
 
 /// API key 인증 게이트 — 보호 라우트 핸들러의 첫 파라미터로 추가한다.
 ///
-/// 예:
-/// ```ignore
+/// 예 (의사코드 — `Json<...>`은 실제 타입이 아니므로 doctest 대상 아님):
+/// ```text
 /// use crate::auth::AdminAuth;
 ///
 /// pub async fn protected_handler(
