@@ -26,3 +26,5 @@ decoder = { path = "../decoder" }
 tokio = { workspace = true }
 chrono = { workspace = true }
 bigdecimal = { workspace = true }
+# examples/migrate.rs — CI 마이그레이션 러너의 에러 컨텍스트용.
+anyhow = { workspace = true }

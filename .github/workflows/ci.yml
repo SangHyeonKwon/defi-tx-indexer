@@ -57,11 +57,18 @@ jobs:
       - name: Unit tests
         run: cargo test --workspace
 
-      # 마이그레이션은 멱등 plain SQL이므로 sqlx-cli 설치 없이 psql로 순서 적용.
+      # 마이그레이션은 프로덕션/테스트와 동일한 sqlx `migrate!` 경로로 적용해
+      # `_sqlx_migrations` 레저를 남긴다 — psql로 돌리면 레저가 비어 이후
+      # `db::run_migrations`(통합 테스트)가 전체를 재적용하고, 비-멱등
+      # 마이그레이션이 들어오는 순간 CI에서만 터진다. Unit tests 스텝의 빌드
+      # 캐시를 재사용하므로 sqlx-cli 설치보다도 빠르다.
+      - name: Apply migrations (sqlx ledger)
+        run: cargo run -p db --example migrate
+
       # 시드 순서는 docker-compose.yml의 seed 서비스와 동일해야 한다.
-      - name: Apply migrations + seed
+      - name: Apply views/procedures/triggers + seed
         run: |
-          for f in migrations/*.sql sql/views/001_views.sql sql/procedures/001_procedures.sql sql/triggers/001_triggers.sql sql/dml/001_seed_data.sql; do
+          for f in sql/views/001_views.sql sql/procedures/001_procedures.sql sql/triggers/001_triggers.sql sql/dml/001_seed_data.sql; do
             echo "== $f"
             psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f"
           done
