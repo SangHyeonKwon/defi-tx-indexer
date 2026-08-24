@@ -218,7 +218,8 @@ COMMENT ON FUNCTION fn_revert_template(TEXT) IS
 -- 곧 classifier 신규 룰/카테고리 후보다.
 --
 -- cluster_kind:
---   NO_DATA      — revert 출력 없음 (out-of-gas, bare revert)
+--   NO_DATA      — 쓸 수 있는 revert 출력 없음 (out-of-gas, bare revert,
+--                  또는 셀렉터조차 안 되는 4바이트 미만 출력)
 --   CUSTOM_ERROR — 미디코딩 커스텀 에러 (셀렉터 단위)
 --   PANIC        — Solidity Panic(uint256)
 --   TEXT         — Error(string) 디코딩됐지만 룰 미매칭 (즉시 룰 추가 가능)
@@ -244,7 +245,8 @@ total AS (
 SELECT
     u.template,
     CASE
-        WHEN u.template = '(no revert data)'      THEN 'NO_DATA'
+        WHEN u.template IN ('(no revert data)', '(undecodable output)')
+                                                  THEN 'NO_DATA'
         WHEN u.template LIKE 'custom_error:%'     THEN 'CUSTOM_ERROR'
         WHEN u.template ~ '^Panic\(0x'            THEN 'PANIC'
         ELSE 'TEXT'

@@ -875,7 +875,7 @@ total AS (SELECT COUNT(*) AS total_unknown FROM unknown_tx)
 SELECT
     u.template,
     CASE
-        WHEN u.template = '(no revert data)'  THEN 'NO_DATA'
+        WHEN u.template IN ('(no revert data)', '(undecodable output)') THEN 'NO_DATA'
         WHEN u.template LIKE 'custom_error:%' THEN 'CUSTOM_ERROR'
         WHEN u.template ~ '^Panic\(0x'        THEN 'PANIC'
         ELSE 'TEXT'
