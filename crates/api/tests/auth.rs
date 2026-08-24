@@ -8,9 +8,11 @@
 //! 정상 200/201/204 시나리오는 verify 스크립트(S17, docker compose 환경)에서
 //! 검증한다 — 본 파일은 *401 게이트*에 집중.
 
+use std::time::Duration;
+
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
-use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
 
 use api::routes::{build_router, ApiState};
@@ -18,8 +20,12 @@ use api::routes::{build_router, ApiState};
 const TEST_KEY: &str = "integration-test-key-32-bytes-aaaa";
 
 fn test_state() -> ApiState {
-    let db_pool =
-        PgPool::connect_lazy("postgres://test:test@localhost:5432/test").expect("lazy pool");
+    // acquire_timeout 기본값(30초)을 그대로 두면 /health 테스트가 DB 연결
+    // 시도로 30초를 소모한다 — 어차피 실패가 전제이므로 즉시 포기.
+    let db_pool = PgPoolOptions::new()
+        .acquire_timeout(Duration::from_millis(100))
+        .connect_lazy("postgres://test:test@localhost:5432/test")
+        .expect("lazy pool");
     ApiState {
         db_pool,
         admin_api_key: TEST_KEY.into(),
