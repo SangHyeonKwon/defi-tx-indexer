@@ -65,13 +65,9 @@ jobs:
       - name: Apply migrations (sqlx ledger)
         run: cargo run -p db --example migrate
 
-      # 시드 순서는 docker-compose.yml의 seed 서비스와 동일해야 한다.
+      # 시드 순서의 단일 출처는 scripts/seed.sh — compose seed 서비스와 공유.
       - name: Apply views/procedures/triggers + seed
-        run: |
-          for f in sql/views/001_views.sql sql/procedures/001_procedures.sql sql/triggers/001_triggers.sql sql/dml/001_seed_data.sql; do
-            echo "== $f"
-            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f"
-          done
+        run: scripts/seed.sh "$DATABASE_URL"
 
       - name: Integration tests (db, requires PG + seed)
         run: cargo test -p db -- --ignored

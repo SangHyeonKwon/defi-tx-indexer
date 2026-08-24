@@ -50,29 +50,20 @@ services:
       - api
 
   # ── Seed (demo data, run manually) ────────────────────────────
+  # 적용 파일·순서의 단일 출처는 scripts/seed.sh — CI와 공유한다.
+  # seed.sh가 $0 기준 ../sql 을 찾으므로 scripts/와 sql/을 같은 부모로 마운트.
   seed:
     image: postgres:16-alpine
     profiles: ["seed"]
-    environment:
-      PGPASSWORD: defi
     volumes:
-      - ./sql:/sql:ro
+      - ./scripts:/repo/scripts:ro
+      - ./sql:/repo/sql:ro
     depends_on:
       postgres:
         condition: service_healthy
     entrypoint:
-      - sh
-      - -c
-      - |
-        echo "Applying views..." &&
-        psql -h postgres -U defi -d defi_analytics -v ON_ERROR_STOP=1 -f /sql/views/001_views.sql &&
-        echo "Applying procedures..." &&
-        psql -h postgres -U defi -d defi_analytics -v ON_ERROR_STOP=1 -f /sql/procedures/001_procedures.sql &&
-        echo "Applying triggers..." &&
-        psql -h postgres -U defi -d defi_analytics -v ON_ERROR_STOP=1 -f /sql/triggers/001_triggers.sql &&
-        echo "Loading seed data..." &&
-        psql -h postgres -U defi -d defi_analytics -v ON_ERROR_STOP=1 -f /sql/dml/001_seed_data.sql &&
-        echo "Done — seed data loaded successfully"
+      - /repo/scripts/seed.sh
+      - postgres://defi:defi@postgres:5432/defi_analytics
 
 volumes:
   pgdata:
