@@ -79,7 +79,8 @@ CUSTOM_ERROR / PANIC / TEXT)는 클러스터의 "다음 액션"을 결정한다 
   크게 오른다.
 - **PANIC** — 코드별 매핑이 기계적으로 가능 (`0x11` 산술 오버플로우
   등). 카테고리 신설(`ARITHMETIC_ERROR` 등) 또는 진단 메시지 확장 후보.
-- **NO_DATA** — revert 출력이 없는 실패 (out-of-gas 등). 문자열로는
+- **NO_DATA** — 쓸 수 있는 revert 출력이 없는 실패 (out-of-gas 등, 또는
+  셀렉터조차 안 되는 4바이트 미만 출력인 `(undecodable output)`). 문자열로는
   더 못 나누고, `trace_log`의 콜트리 피처(깊이·gas 소진 패턴)로
   후속 분석해야 하는 영역.
 

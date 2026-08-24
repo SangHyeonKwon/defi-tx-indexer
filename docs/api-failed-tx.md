@@ -463,7 +463,7 @@ Measured against the seed data (one bare-revert UNKNOWN failure):
 
 | Kind | Meaning |
 |------|---------|
-| `NO_DATA` | No revert output at all (out-of-gas, bare `revert()`) |
+| `NO_DATA` | No usable revert output (out-of-gas, bare `revert()`, or output too short to hold a 4-byte selector) |
 | `CUSTOM_ERROR` | Undecoded custom error, clustered by 4-byte selector |
 | `PANIC` | Solidity `Panic(uint256)` (0x11 overflow, 0x12 div-by-zero, …) |
 | `TEXT` | Decoded `Error(string)` that matched no classifier rule |
