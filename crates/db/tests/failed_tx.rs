@@ -205,3 +205,62 @@ async fn first_error_frame_unknown_hash_is_none() {
         .expect("query ok");
     assert!(root.is_none(), "BAD hash has no trace rows → None");
 }
+
+/// UNKNOWN revert 클러스터 (vw_unknown_revert_clusters) — 시드에 UNKNOWN 실패가
+/// 있으므로 최소 1개의 `NO_DATA` 클러스터(`(no revert data)`)가 나와야 하고,
+/// 뷰 정렬(`occurrences DESC`)과 집계 불변식(pct 합 ≤ 100, occurrences ≥ senders)이
+/// 유지되어야 한다.
+#[tokio::test]
+#[ignore = "requires PostgreSQL: cargo test -p db -- --ignored"]
+async fn unknown_revert_clusters_seed_shape_and_invariants() {
+    let pool = db::create_pool(&db_url(), 2).await.expect("connect");
+    let rows = db::queries::get_unknown_revert_clusters(&pool)
+        .await
+        .expect("query ok");
+
+    assert!(!rows.is_empty(), "seed has UNKNOWN failures → ≥1 cluster");
+
+    let no_data = rows
+        .iter()
+        .find(|r| r.cluster_kind == "NO_DATA")
+        .expect("seeded bare-revert failure must cluster as NO_DATA");
+    assert_eq!(no_data.template, "(no revert data)");
+    assert!(no_data.occurrences >= 1);
+    assert!(
+        no_data.sample_tx_hash.is_some(),
+        "non-empty cluster carries a sample tx hash"
+    );
+
+    let mut pct_sum = 0.0_f64;
+    for r in &rows {
+        assert!(
+            matches!(
+                r.cluster_kind.as_str(),
+                "NO_DATA" | "CUSTOM_ERROR" | "PANIC" | "TEXT"
+            ),
+            "unexpected cluster_kind: {}",
+            r.cluster_kind
+        );
+        assert!(
+            r.distinct_senders <= r.occurrences,
+            "senders cannot exceed occurrences"
+        );
+        assert!(r.first_seen <= r.last_seen);
+        pct_sum += r
+            .pct_of_unknown
+            .to_string()
+            .parse::<f64>()
+            .expect("pct is numeric");
+    }
+    assert!(
+        pct_sum <= 100.0 + 0.5,
+        "pct_of_unknown must sum to ≤ ~100 (rounding slack), got {pct_sum}"
+    );
+
+    for w in rows.windows(2) {
+        assert!(
+            w[0].occurrences >= w[1].occurrences,
+            "view must be ordered occurrences DESC"
+        );
+    }
+}

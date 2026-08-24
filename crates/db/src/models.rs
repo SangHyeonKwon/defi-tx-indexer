@@ -434,6 +434,40 @@ pub struct FailedTxAnalysis {
     pub most_recent_failure: DateTime<Utc>,
 }
 
+/// UNKNOWN 실패의 revert 사유 클러스터 한 행 (vw_unknown_revert_clusters).
+///
+/// classifier가 분류하지 못한 실패를 `fn_revert_template` 정규화 키로 묶어
+/// 빈도·낭비 가스 순으로 랭킹한다 — 상위 클러스터가 classifier 신규 룰 후보.
+/// `sample_revert_reason` / `sample_tx_hash`는 각각 독립적인 `MIN`이라 같은
+/// 행에서 나온 값이 아닐 수 있다(대표 예시 용도).
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct UnknownRevertCluster {
+    /// 정규화된 revert 템플릿 (클러스터 키)
+    pub template: String,
+    /// 클러스터 종류: NO_DATA | CUSTOM_ERROR | PANIC | TEXT
+    pub cluster_kind: String,
+    /// 발생 건수
+    pub occurrences: i64,
+    /// 전체 UNKNOWN 대비 비율 (%)
+    pub pct_of_unknown: BigDecimal,
+    /// 총 낭비 가스 (`SUM(BIGINT)` → NUMERIC)
+    pub total_gas_wasted: BigDecimal,
+    /// 평균 낭비 가스
+    pub avg_gas_wasted: BigDecimal,
+    /// 고유 발신자 수
+    pub distinct_senders: i64,
+    /// 고유 함수 셀렉터 수
+    pub distinct_selectors: i64,
+    /// 대표 revert 사유 (독립 MIN — 예시 용도)
+    pub sample_revert_reason: Option<String>,
+    /// 대표 tx 해시 (독립 MIN — 예시 용도)
+    pub sample_tx_hash: Option<String>,
+    /// 최초 발생 시각
+    pub first_seen: DateTime<Utc>,
+    /// 최근 발생 시각
+    pub last_seen: DateTime<Utc>,
+}
+
 /// 풀 종합 통계 (fn_get_pool_stats).
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct PoolStats {

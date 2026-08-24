@@ -51,3 +51,14 @@ pub async fn failed_tx_analysis(
     let analysis = db::queries::get_failed_tx_analysis(&pool).await?;
     Ok(Json(ApiResponse { data: analysis }))
 }
+
+/// UNKNOWN revert 클러스터를 조회한다 (vw_unknown_revert_clusters).
+///
+/// 뷰가 이미 `occurrences DESC, total_gas_wasted DESC`로 정렬된 소규모 집계라
+/// 페이지네이션 없이 전체 행을 반환한다. 데이터가 없으면 빈 배열.
+pub async fn unknown_revert_clusters(
+    State(pool): State<PgPool>,
+) -> Result<Json<ApiResponse<Vec<db::models::UnknownRevertCluster>>>, ApiError> {
+    let clusters = db::queries::get_unknown_revert_clusters(&pool).await?;
+    Ok(Json(ApiResponse { data: clusters }))
+}

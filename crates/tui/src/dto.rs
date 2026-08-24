@@ -175,6 +175,44 @@ pub struct FailedTxAnalysis {
     pub most_recent_failure: String,
 }
 
+/// UNKNOWN revert 클러스터 한 행 (`/v1/analytics/failed-tx/unknown-clusters`).
+///
+/// 일부 필드(`avg_gas_wasted`/`distinct_selectors`/`sample_*`/`first_seen`)는
+/// 와이어 계약을 충실히 미러하기 위해 유지하되 MVP UI에선 렌더하지 않는다
+/// (테스트는 전체를 역직렬화). 의도된 미사용이므로 `#[allow(dead_code)]`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct UnknownRevertCluster {
+    /// 정규화된 revert 템플릿 (클러스터 키).
+    pub template: String,
+    /// 클러스터 종류: NO_DATA | CUSTOM_ERROR | PANIC | TEXT.
+    pub cluster_kind: String,
+    /// 발생 건수.
+    pub occurrences: i64,
+    /// 전체 UNKNOWN 대비 비율(%) — **BigDecimal → 문자열**.
+    pub pct_of_unknown: String,
+    /// 총 낭비 가스 — **BigDecimal → 문자열**.
+    pub total_gas_wasted: String,
+    /// 평균 낭비 가스 — **BigDecimal → 문자열** (MVP 미표시).
+    #[allow(dead_code)]
+    pub avg_gas_wasted: String,
+    /// 고유 발신자 수.
+    pub distinct_senders: i64,
+    /// 고유 함수 셀렉터 수 (MVP 미표시).
+    #[allow(dead_code)]
+    pub distinct_selectors: i64,
+    /// 대표 revert 사유 — 독립 MIN, 예시 용도 (MVP 미표시).
+    #[allow(dead_code)]
+    pub sample_revert_reason: Option<String>,
+    /// 대표 tx 해시 — 독립 MIN, 예시 용도 (MVP 미표시).
+    #[allow(dead_code)]
+    pub sample_tx_hash: Option<String>,
+    /// 최초 발생 시각 (RFC3339, MVP 미표시).
+    #[allow(dead_code)]
+    pub first_seen: String,
+    /// 최근 발생 시각 (RFC3339).
+    pub last_seen: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,6 +315,37 @@ mod tests {
             serde_json::from_str(json).expect("analysis deserializes");
         assert_eq!(parsed.data[0].avg_gas_wasted, "52000.00");
         assert_eq!(parsed.data[0].pct_of_total, "48.00");
+    }
+
+    /// 클러스터 실측 응답 — NUMERIC 필드가 **문자열**(BigDecimal은 후행 0을
+    /// 보존하지 않아 `"100"`), nullable sample 필드가 깨지지 않아야 한다.
+    #[test]
+    fn deserialize_unknown_clusters_measured_shape() {
+        let json = r#"{
+          "data": [
+            {
+              "template": "(no revert data)",
+              "cluster_kind": "NO_DATA",
+              "occurrences": 1,
+              "pct_of_unknown": "100",
+              "total_gas_wasted": "41000",
+              "avg_gas_wasted": "41000",
+              "distinct_senders": 1,
+              "distinct_selectors": 0,
+              "sample_revert_reason": null,
+              "sample_tx_hash": "0xdead000000000000000000000000000000000000000000000000000000000004",
+              "first_seen": "2023-09-01T12:00:29Z",
+              "last_seen": "2023-09-01T12:00:29Z"
+            }
+          ]
+        }"#;
+        let parsed: ApiResponse<Vec<UnknownRevertCluster>> =
+            serde_json::from_str(json).expect("clusters deserialize");
+        let c = &parsed.data[0];
+        assert_eq!(c.cluster_kind, "NO_DATA");
+        assert_eq!(c.pct_of_unknown, "100");
+        assert!(c.sample_revert_reason.is_none());
+        assert!(c.sample_tx_hash.is_some());
     }
 
     /// `/v1/blocks/latest` — 빈 DB에서 `{ "data": null }`.

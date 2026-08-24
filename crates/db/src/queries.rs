@@ -7,7 +7,7 @@ use crate::models::{
     ErrorCategory, FailedTransaction, FailedTxAnalysis, FailedTxByLabelPoint, FailedTxTrendPoint,
     FunctionSignature, LiquidityEvent, LiquidityEventType, Pool, PoolStats, PriceSnapshot,
     RateAlertMatch, SnapshotInterval, SwapEvent, TimeBucket, Token, TokenTransfer, TopTrader,
-    TraceLog, Transaction, UserProfile,
+    TraceLog, Transaction, UnknownRevertCluster, UserProfile,
 };
 
 /// PostgreSQL enum 값으로 변환하는 헬퍼.
@@ -576,6 +576,21 @@ pub async fn get_failed_tx_analysis(pool: &PgPool) -> Result<Vec<FailedTxAnalysi
     let rows = sqlx::query_as::<_, FailedTxAnalysis>("SELECT * FROM vw_failed_tx_analysis")
         .fetch_all(pool)
         .await?;
+    Ok(rows)
+}
+
+/// UNKNOWN revert 클러스터를 조회한다 (vw_unknown_revert_clusters).
+///
+/// 뷰 자체가 `occurrences DESC, total_gas_wasted DESC`로 정렬된 집계 결과라
+/// 행 수가 작다 — 페이지네이션 없이 전체를 반환한다.
+#[tracing::instrument(skip(pool))]
+pub async fn get_unknown_revert_clusters(
+    pool: &PgPool,
+) -> Result<Vec<UnknownRevertCluster>, DbError> {
+    let rows =
+        sqlx::query_as::<_, UnknownRevertCluster>("SELECT * FROM vw_unknown_revert_clusters")
+            .fetch_all(pool)
+            .await?;
     Ok(rows)
 }
 
