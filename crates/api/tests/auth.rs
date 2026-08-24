@@ -1,9 +1,10 @@
 //! Admin API key integration tests (S16/M006).
 //!
 //! 라우터를 실제로 빌드한 뒤 `tower::ServiceExt::oneshot`으로 요청을 주입해
-//! HTTP 레벨에서 인증 게이트를 검증한다. 핸들러까지 도달하지 않고 401이 반환됨
-//! (extractor가 우선 거름)을 확인 → `PgPool::connect_lazy`로 DB connect 시도
-//! 없이 안전하게 테스트 가능.
+//! HTTP 레벨에서 인증 게이트를 검증한다. 보호 라우트는 extractor가 핸들러 앞에서
+//! 걸러 401을 반환하므로 DB에 닿지 않는다. 단 `/health`는 실제로 DB 연결을
+//! 시도하므로 lazy 풀에 짧은 `acquire_timeout`(100ms)을 줘 즉시 실패시킨다 —
+//! 기본값(30초)을 그대로 두면 테스트가 30초씩 매달린다.
 //!
 //! 정상 200/201/204 시나리오는 verify 스크립트(S17, docker compose 환경)에서
 //! 검증한다 — 본 파일은 *401 게이트*에 집중.
