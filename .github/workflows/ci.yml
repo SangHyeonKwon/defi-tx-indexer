@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust — fmt, clippy, unit + PG integration tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # docker-compose.yml의 postgres 서비스와 동일한 계정/DB
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: defi
+          POSTGRES_PASSWORD: defi
+          POSTGRES_DB: defi_analytics
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U defi -d defi_analytics"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://defi:defi@localhost:5432/defi_analytics
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: rustfmt
+        run: cargo fmt --check
+
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Unit tests
+        run: cargo test --workspace
+
+      # 마이그레이션은 멱등 plain SQL이므로 sqlx-cli 설치 없이 psql로 순서 적용.
+      # 시드 순서는 docker-compose.yml의 seed 서비스와 동일해야 한다.
+      - name: Apply migrations + seed
+        env:
+          PGPASSWORD: defi
+        run: |
+          for f in migrations/*.sql; do
+            echo "== $f"
+            psql -h localhost -U defi -d defi_analytics -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+          for f in sql/views/001_views.sql sql/procedures/001_procedures.sql sql/triggers/001_triggers.sql sql/dml/001_seed_data.sql; do
+            echo "== $f"
+            psql -h localhost -U defi -d defi_analytics -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+
+      - name: Integration tests (db, requires PG + seed)
+        run: cargo test -p db -- --ignored
+
+  web:
+    name: Web — tests + build (build includes tsc)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - run: npm test
+
+      - run: npm run build
