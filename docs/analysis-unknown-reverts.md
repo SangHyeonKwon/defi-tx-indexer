@@ -97,13 +97,20 @@ FROM vw_unknown_revert_clusters
 GROUP BY cluster_kind ORDER BY txs DESC;
 ```
 
-## 후속 작업 (이 변경에 포함되지 않음)
+## 후속 작업
 
-1. `classifier.rs` 룰 추가 — 위 TEXT 후보 반영 + 오분류(`not enough`)
-   수정. Rust 변경이므로 별도 커밋/PR.
-2. `sql/olap/001_window_functions.sql` Query 8 피벗이 세분화 이전 6개
+이 분석에서 곧바로 이어진 작업 (같은 브랜치에서 완료):
+
+1. ~~`classifier.rs` 룰 추가~~ — **완료**: TRANSFER_FROM_FAILED 룰 구멍
+   + `not enough` 오분류 수정, 회귀 테스트 포함.
+2. ~~API 노출 및 TUI 패널~~ — **완료**:
+   `GET /v1/analytics/failed-tx/unknown-clusters` + TUI `[4] Clusters` 탭.
+
+남은 것 (별도 PR):
+
+3. `sql/olap/001_window_functions.sql` Query 8 피벗이 세분화 이전 6개
    카테고리만 세는 문제 (S12.1에서 추가된 4개 미반영) — 별도 수정.
-3. API 노출 (`GET /v1/analytics/unknown-clusters`) 및 TUI 패널 —
-   뷰가 이미 있으므로 라우트만 추가하면 된다.
 4. 에러 셀렉터 사전 테이블(`error_signature`) — `function_signature`와
    동일한 패턴으로 CUSTOM_ERROR 클러스터 디코딩.
+5. 실제 메인넷 backfill 데이터로 클러스터 분포 재검증 — 지금까지의
+   검증은 합성 코퍼스 기준이다.
