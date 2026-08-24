@@ -1368,7 +1368,7 @@ pub async fn failed_tx_by_label_aggregate(
         })
         .collect();
 
-    out.sort_by(|a, b| b.total_failures.cmp(&a.total_failures));
+    out.sort_by_key(|p| std::cmp::Reverse(p.total_failures));
     if limit > 0 {
         out.truncate(limit as usize);
     }
