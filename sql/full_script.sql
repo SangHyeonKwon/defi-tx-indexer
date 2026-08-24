@@ -477,7 +477,7 @@ VALUES
      3000, '2021-05-05 00:00:00+00')
 ON CONFLICT DO NOTHING;
 
--- transaction (5 성공 + 3 실패)
+-- transaction (5 성공 + 4 실패)
 INSERT INTO transaction (tx_hash, from_addr, to_addr, block_number, gas_used, gas_price, value, status, input_data)
 VALUES
     ('0xabc1230000000000000000000000000000000000000000000000000000000001',
@@ -503,7 +503,10 @@ VALUES
      18000001, 38000, 35000000000, 0, 0, '0x414bf389'),
     ('0xdead000000000000000000000000000000000000000000000000000000000003',
      '0x7777777777777777777777777777777777777777', '0xE592427A0AEce92De3Edee1F18E0157C05861564',
-     18000002, 52000, 28000000000, 0, 0, '0xc04b8d59')
+     18000002, 52000, 28000000000, 0, 0, '0xc04b8d59'),
+    ('0xdead000000000000000000000000000000000000000000000000000000000004',
+     '0x8888888888888888888888888888888888888888', '0xE592427A0AEce92De3Edee1F18E0157C05861564',
+     18000002, 41000, 27000000000, 0, 0, '0x414bf389')
 ON CONFLICT DO NOTHING;
 
 -- swap_event
@@ -587,7 +590,9 @@ VALUES
      818000000, 4, '2023-09-01 12:00:28+00')
 ON CONFLICT DO NOTHING;
 
--- failed_transaction
+-- failed_transaction (3 분류 + 1 UNKNOWN)
+-- 재실행 시 트리거(trg_transaction_check_failed)가 이미 존재하는 상태라면
+-- UNKNOWN 스텁이 선행 삽입될 수 있으므로 DO UPDATE로 상세를 보장한다.
 INSERT INTO failed_transaction (tx_hash, error_category, revert_reason, failing_function, gas_used, timestamp)
 VALUES
     ('0xdead000000000000000000000000000000000000000000000000000000000001',
@@ -595,8 +600,15 @@ VALUES
     ('0xdead000000000000000000000000000000000000000000000000000000000002',
      'DEADLINE_EXPIRED', 'Transaction too old', 'exactInputSingle', 38000, '2023-09-01 12:00:14+00'),
     ('0xdead000000000000000000000000000000000000000000000000000000000003',
-     'INSUFFICIENT_BALANCE', 'STF', 'exactInput', 52000, '2023-09-01 12:00:26+00')
-ON CONFLICT DO NOTHING;
+     'INSUFFICIENT_BALANCE', 'STF', 'exactInput', 52000, '2023-09-01 12:00:26+00'),
+    ('0xdead000000000000000000000000000000000000000000000000000000000004',
+     'UNKNOWN', NULL, NULL, 41000, '2023-09-01 12:00:29+00')
+ON CONFLICT (tx_hash) DO UPDATE SET
+    error_category   = EXCLUDED.error_category,
+    revert_reason    = EXCLUDED.revert_reason,
+    failing_function = EXCLUDED.failing_function,
+    gas_used         = EXCLUDED.gas_used,
+    "timestamp"      = EXCLUDED."timestamp";
 
 -- price_snapshot
 INSERT INTO price_snapshot (pool_address, price, tick, liquidity, snapshot_ts, interval_type)

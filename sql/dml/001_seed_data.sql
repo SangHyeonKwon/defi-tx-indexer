@@ -98,7 +98,8 @@ VALUES
         18000002, 175000, 25000000000, 1000000000000000000, 1,  -- 1 ETH value
         '0x414bf389'
     ),
-    -- 실패 트랜잭션 3건 (status=0)
+    -- 실패 트랜잭션 4건 (status=0) — 3건은 section 8에서 분류 상세를 받고,
+    -- 0xdead...04는 상세 없이 UNKNOWN으로 남는 케이스(디코딩 불가 시나리오).
     (
         '0xdead000000000000000000000000000000000000000000000000000000000001',
         '0x5555555555555555555555555555555555555555',
@@ -119,6 +120,13 @@ VALUES
         '0xE592427A0AEce92De3Edee1F18E0157C05861564',
         18000002, 52000, 28000000000, 0, 0,
         '0xc04b8d59'
+    ),
+    (
+        '0xdead000000000000000000000000000000000000000000000000000000000004',
+        '0x8888888888888888888888888888888888888888',
+        '0xE592427A0AEce92De3Edee1F18E0157C05861564',
+        18000002, 41000, 27000000000, 0, 0,
+        '0x414bf389'
     )
 ON CONFLICT DO NOTHING;
 
@@ -346,8 +354,12 @@ VALUES
 ON CONFLICT DO NOTHING;
 
 -- ────────────────────────────────────────────
--- 8. failed_transaction (3 실패 상세)
+-- 8. failed_transaction (4 실패 상세 — 3 분류 + 1 UNKNOWN)
 -- ────────────────────────────────────────────
+-- 분리 스크립트 흐름(triggers → dml)에서는 section 4의 status=0 INSERT 시점에
+-- trg_transaction_check_failed가 UNKNOWN 스텁을 먼저 넣는다. DO NOTHING이면
+-- 아래 분류 상세가 통째로 버려지므로 DO UPDATE로 스텁을 상세로 승격한다.
+-- 재실행해도 같은 값을 다시 쓰므로 멱등.
 INSERT INTO failed_transaction (tx_hash, error_category, revert_reason, failing_function, gas_used, timestamp)
 VALUES
     (
@@ -373,8 +385,23 @@ VALUES
         'exactInput',
         52000,
         '2023-09-01 12:00:26+00'
+    ),
+    -- revert 사유 디코딩 실패 케이스 — 분류 불가로 UNKNOWN 유지
+    -- (full_script처럼 트리거 없이 시드하는 흐름에서도 UNKNOWN 1건을 보장).
+    (
+        '0xdead000000000000000000000000000000000000000000000000000000000004',
+        'UNKNOWN',
+        NULL,
+        NULL,
+        41000,
+        '2023-09-01 12:00:29+00'
     )
-ON CONFLICT DO NOTHING;
+ON CONFLICT (tx_hash) DO UPDATE SET
+    error_category   = EXCLUDED.error_category,
+    revert_reason    = EXCLUDED.revert_reason,
+    failing_function = EXCLUDED.failing_function,
+    gas_used         = EXCLUDED.gas_used,
+    "timestamp"      = EXCLUDED."timestamp";
 
 -- ────────────────────────────────────────────
 -- 9. price_snapshot (6 snapshots — 1m, 1h 간격)
