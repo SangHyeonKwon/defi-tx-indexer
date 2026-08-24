@@ -65,13 +65,13 @@ services:
       - -c
       - |
         echo "Applying views..." &&
-        psql -h postgres -U defi -d defi_analytics -f /sql/views/001_views.sql &&
+        psql -h postgres -U defi -d defi_analytics -v ON_ERROR_STOP=1 -f /sql/views/001_views.sql &&
         echo "Applying procedures..." &&
-        psql -h postgres -U defi -d defi_analytics -f /sql/procedures/001_procedures.sql &&
+        psql -h postgres -U defi -d defi_analytics -v ON_ERROR_STOP=1 -f /sql/procedures/001_procedures.sql &&
         echo "Applying triggers..." &&
-        psql -h postgres -U defi -d defi_analytics -f /sql/triggers/001_triggers.sql &&
+        psql -h postgres -U defi -d defi_analytics -v ON_ERROR_STOP=1 -f /sql/triggers/001_triggers.sql &&
         echo "Loading seed data..." &&
-        psql -h postgres -U defi -d defi_analytics -f /sql/dml/001_seed_data.sql &&
+        psql -h postgres -U defi -d defi_analytics -v ON_ERROR_STOP=1 -f /sql/dml/001_seed_data.sql &&
         echo "Done — seed data loaded successfully"
 
 volumes:

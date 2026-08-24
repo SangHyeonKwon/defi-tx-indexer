@@ -362,7 +362,7 @@ sqlx migrate run
 cargo build --release
 cargo test                            # All unit tests
 cargo test -p db -- --ignored         # Integration tests (PG required)
-cargo clippy --workspace -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 
 # Run indexer (backfill)
