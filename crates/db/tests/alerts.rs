@@ -1,13 +1,16 @@
 //! Alert 구독/매칭/멱등 통합 테스트 — 실제 PostgreSQL 필요.
 //!
 //! `#[ignore]`. 실행: docker PG 기동 후 `cargo test -p db -- --ignored`.
-//! 픽스처는 시드(~18M)와 분리된 높은 블록을 쓰고(파괴적 rollback이 시드를
-//! 건드리지 않도록 — S06 교훈), 끝에 구독·블록·체크포인트를 원복한다.
+//! 픽스처는 바이너리별 disjoint 블록 밴드를 쓰고 끝에 자기 행만 명시 삭제한다
+//! (병렬 실행 안전 — cargo-nextest 등).
+//!
+//! 블록 밴드 맵: 시드 ~18M / alert_rate 97.0M / labels 97.5M / **alerts 98M** /
+//! rollback 99M(최상위 — `rollback_from_block`은 ≥N 전역 삭제라 그 파일 전용).
 
 use db::models::{AlertMatch, Block, ErrorCategory, Transaction};
 
 const DEFAULT_URL: &str = "postgres://defi:defi@localhost:5432/defi_analytics";
-const BLOCK: i64 = 98_000_001; // seed max(~18M) 위 + rollback 테스트(99M)와도 분리
+const BLOCK: i64 = 98_000_001; // alerts 전용 밴드 — 파일 상단 밴드 맵 참조
 const TXH: &str = "0xa1e7000000000000000000000000000000000000000000000000000000000001";
 const TO: &str = "0x00000000000000000000000000000000000000aa";
 /// dispatcher의 운영 기본값과 일치(=60s).
@@ -166,9 +169,25 @@ async fn alert_match_is_idempotent_and_scoped() {
             .await
             .expect("delete sub");
     }
-    db::queries::rollback_from_block(&pool, BLOCK)
+    // 픽스처는 자기 행만 명시 삭제 — rollback_from_block(BLOCK)은 ≥BLOCK 전역
+    // 삭제라 병렬 실행 시 상위 밴드(rollback 99M) 픽스처까지 지운다.
+    // failed_transaction은 트리거가 만든 행이라 FK CASCADE 없음 — 먼저 삭제.
+    sqlx::query("DELETE FROM failed_transaction WHERE tx_hash = $1")
+        .bind(TXH)
+        .execute(&pool)
         .await
-        .expect("rollback fixtures");
+        .expect("cleanup failed_tx");
+    sqlx::query("DELETE FROM transaction WHERE tx_hash = $1")
+        .bind(TXH)
+        .execute(&pool)
+        .await
+        .expect("cleanup tx");
+    sqlx::query("DELETE FROM block WHERE block_number = $1")
+        .bind(BLOCK)
+        .execute(&pool)
+        .await
+        .expect("cleanup block");
+    // 체크포인트 원복 (이 테스트가 만진 게 없지만 안전망 — alert_rate와 동일 관례)
     if let Some(p) = prior {
         db::queries::update_checkpoint(&pool, 1, p)
             .await

@@ -1,12 +1,16 @@
 //! S14 (M005) — rate_threshold alert 통합 테스트 (실제 PostgreSQL 필요).
 //!
 //! `#[ignore]`. 실행: docker PG 기동 후 `cargo test -p db -- --ignored`.
-//! 픽스처는 시드(~18M)와 분리된 높은 블록을 쓰고 끝에 원복(파괴적 rollback 회피).
+//! 픽스처는 바이너리별 disjoint 블록 밴드를 쓰고 끝에 자기 행만 명시 삭제한다
+//! (병렬 실행 안전 — cargo-nextest 등).
+//!
+//! 블록 밴드 맵: 시드 ~18M / **alert_rate 97.0M** / labels 97.5M / alerts 98M /
+//! rollback 99M(최상위 — `rollback_from_block`은 ≥N 전역 삭제라 그 파일 전용).
 
 use db::models::{Block, Transaction};
 
 const DEFAULT_URL: &str = "postgres://defi:defi@localhost:5432/defi_analytics";
-const BASE_BLOCK: i64 = 97_000_001; // alerts.rs와 분리(98M), rollback과도 분리(99M)
+const BASE_BLOCK: i64 = 97_000_001; // alert_rate 전용 밴드 — 파일 상단 밴드 맵 참조
 const TX_PREFIX: &str = "0xa1e7c071";
 
 fn db_url() -> String {

@@ -1,13 +1,16 @@
 //! S09 / M003: contract_label × failed_tx aggregate 통합 테스트.
 //!
 //! `#[ignore]`. 실행: docker PG 기동 후 `cargo test -p db -- --ignored`.
-//! 픽스처는 시드(~18M)와 alerts(98M)/rollback(99M) 테스트와도 분리된 높은
-//! 블록(97M)을 쓰고, 끝에 라벨·블록·체크포인트를 원복한다.
+//! 픽스처는 바이너리별 disjoint 블록 밴드를 쓰고 끝에 자기 행만 명시 삭제한다
+//! (병렬 실행 안전 — cargo-nextest 등).
+//!
+//! 블록 밴드 맵: 시드 ~18M / alert_rate 97.0M / **labels 97.5M** / alerts 98M /
+//! rollback 99M(최상위 — `rollback_from_block`은 ≥N 전역 삭제라 그 파일 전용).
 
 use db::models::{Block, ContractLabel, Transaction};
 
 const DEFAULT_URL: &str = "postgres://defi:defi@localhost:5432/defi_analytics";
-const BLOCK: i64 = 97_000_001; // 시드 + alerts(98M) + rollback(99M) 분리
+const BLOCK: i64 = 97_500_001; // labels 전용 밴드 — 파일 상단 밴드 맵 참조
 const TXH_A: &str = "0xc40bec0000000000000000000000000000000000000000000000000000000001";
 const TXH_B: &str = "0xc40bec0000000000000000000000000000000000000000000000000000000002";
 const LABEL_PUBLIC_ADDR: &str = "0xaabb000000000000000000000000000000000000";
@@ -128,9 +131,27 @@ async fn failed_tx_by_label_pivots_categories_and_filters_by_owner() {
     db::queries::delete_contract_label(&pool, LABEL_ALICE_ADDR)
         .await
         .expect("delete alice label");
-    db::queries::rollback_from_block(&pool, BLOCK)
+    // 픽스처는 자기 행만 명시 삭제 — rollback_from_block(BLOCK)은 ≥BLOCK 전역
+    // 삭제라 병렬 실행 시 상위 밴드(alerts 98M, rollback 99M) 픽스처까지 지운다.
+    // failed_transaction은 트리거가 만든 행이라 FK CASCADE 없음 — 먼저 삭제.
+    for h in [TXH_A, TXH_B] {
+        sqlx::query("DELETE FROM failed_transaction WHERE tx_hash = $1")
+            .bind(h)
+            .execute(&pool)
+            .await
+            .expect("cleanup failed_tx");
+        sqlx::query("DELETE FROM transaction WHERE tx_hash = $1")
+            .bind(h)
+            .execute(&pool)
+            .await
+            .expect("cleanup tx");
+    }
+    sqlx::query("DELETE FROM block WHERE block_number = $1")
+        .bind(BLOCK)
+        .execute(&pool)
         .await
-        .expect("rollback fixtures");
+        .expect("cleanup block");
+    // 체크포인트 원복 (이 테스트가 만진 게 없지만 안전망 — alert_rate와 동일 관례)
     if let Some(p) = prior {
         db::queries::update_checkpoint(&pool, 1, p)
             .await
