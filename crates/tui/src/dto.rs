@@ -195,7 +195,8 @@ pub struct UnknownRevertCluster {
     /// 평균 낭비 가스 — **BigDecimal → 문자열** (MVP 미표시).
     #[allow(dead_code)]
     pub avg_gas_wasted: String,
-    /// 고유 발신자 수.
+    /// 고유 발신자 수 — 클러스터별 값이라 합산 불가 (MVP 미표시).
+    #[allow(dead_code)]
     pub distinct_senders: i64,
     /// 고유 함수 셀렉터 수 (MVP 미표시).
     #[allow(dead_code)]

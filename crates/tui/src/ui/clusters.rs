@@ -92,11 +92,14 @@ fn render_table(f: &mut Frame<'_>, area: Rect, app: &App) {
 fn render_footer(f: &mut Frame<'_>, area: Rect, app: &App) {
     let text = match &app.clusters {
         Loadable::Loaded(rows) => {
-            let senders: i64 = rows.iter().map(|c| c.distinct_senders).sum();
+            // occurrences 합 = 전체 UNKNOWN 건수 (모든 UNKNOWN tx가 정확히 한
+            // 템플릿 클러스터에 속하므로). distinct_senders는 클러스터별 값이라
+            // 합산하면 여러 클러스터에 걸친 발신자가 중복 계산돼 쓰지 않는다.
+            let total: i64 = rows.iter().map(|c| c.occurrences).sum();
             format!(
-                " {} cluster(s) · {} distinct sender(s) · ordered by occurrences desc",
+                " {} cluster(s) · {} unknown failure(s) · ordered by occurrences desc",
                 rows.len(),
-                senders
+                total
             )
         }
         _ => " —".to_string(),
