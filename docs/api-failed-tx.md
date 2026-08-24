@@ -1,6 +1,6 @@
 # API — Failure Intelligence (M001)
 
-> The edge Dune does not provide out of the box (see `.gsd/PROJECT.md`):
+> The edge Dune does not provide out of the box:
 > per-transaction failure **diagnosis**, a filtered **list** with accurate
 > totals, and a category **trend** feed. Three endpoints, consistent envelope,
 > embeddable. Runnable example & smoke: `./scripts/verify-failed-tx.sh`.
@@ -163,8 +163,7 @@ order the indexer flattened the call tree when inserting (`trace_id` is a
 BIGSERIAL that preserves that order). This is the correct linear tree order;
 sorting by `call_depth` first would interleave sibling subtrees and make the
 tree unreconstructable. Frames are flattened, not nested — nested
-reconstruction is a future slice (see `.gsd/DECISIONS.md` D004); use
-`call_depth` to indent/rebuild.
+reconstruction is a future slice; use `call_depth` to indent/rebuild.
 
 `call_tree` is capped at **2000** frames; `call_tree_truncated: true` signals a
 partial response (defense against pathologically large traces).
@@ -175,7 +174,7 @@ whose `error` is non-null, i.e. **where the revert actually originated**
 for the common "where did the failure come from?" question, so clients don't
 have to scan the array. **`null` is explicit, not absence** — it signals
 that the indexer recorded no per-frame error for this transaction (silent
-default is intentionally not allowed; see `.gsd/DECISIONS.md` D014).
+default is intentionally not allowed — design decision D014).
 
 Per-frame trace analysis is what Dune can't expose out of the box — Dune's
 query model has no notion of `trace_log.error` because traces aren't part
@@ -369,7 +368,7 @@ dashboards don't expose as an embeddable contract):
 
 The existing `PaginatedResponse` (no `total`) is left unchanged for contract
 compatibility; this endpoint uses the additive `TotalPaginatedResponse`
-(see `.gsd/DECISIONS.md` D005).
+(design decision D005).
 
 ### Response `400`
 
@@ -396,8 +395,7 @@ Failure counts bucketed by time × error category — the trend feed for charts
 | `to` | string | Upper bound on `timestamp`, RFC 3339 (optional). |
 
 `interval` is a closed enum mapped to a fixed `date_trunc` literal **and** passed
-as a bound parameter — never string-interpolated (SQL-injection safe; see
-`.gsd/S03-PLAN.md` and KNOWLEDGE).
+as a bound parameter — never string-interpolated (SQL-injection safe).
 
 ### Response `200`
 

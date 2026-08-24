@@ -2,8 +2,8 @@
 
 Minimal `urllib`-based client for the Amarillo Failure Intelligence API.
 **Stdlib only** — no `pip install`, no `requirements.txt`. Python 3.9+.
-Per `.gsd/DECISIONS.md` D017, this is intentionally an *example* client —
-PyPI packaging is a separate slice (`S13.1` sketch in the ROADMAP).
+This is intentionally an *example* client (design decision D017) —
+PyPI packaging is a separate future slice.
 
 ## What's in it
 

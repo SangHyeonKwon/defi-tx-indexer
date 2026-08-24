@@ -109,7 +109,7 @@ rewinds the checkpoint — then re-indexes on the next iteration.
   best-effort floor rollback; that bound is now explicit, not an unstated
   "safe" assumption.
 
-## Limits / scope (see `.gsd/DECISIONS.md` D009, D010)
+## Limits / scope
 
 - Polling **by default**; `eth_subscribe` (`newHeads`) is opt-in via
   `--subscribe` + `WS_URL`, with automatic polling fallback (S07-T02, D011).

@@ -3,9 +3,9 @@ Amarillo — minimal Python example client.
 
 Self-contained: depends only on the Python 3.9+ standard library
 (``urllib.request``, ``json``, ``hmac``, ``hashlib``, ``dataclasses``,
-``typing``). No ``pip install`` required. Per ``.gsd/DECISIONS.md`` D017, this
-is intentionally an *example* client — PyPI packaging is a separate slice
-(``S13.1`` sketch in the ROADMAP).
+``typing``). No ``pip install`` required. This is intentionally an
+*example* client (design decision D017) — PyPI packaging is a separate
+future slice.
 
 Wire types and endpoint paths mirror ``crates/api/src/routes/*.rs`` and
 ``crates/db/src/models.rs``. The response contract is additive (D004 / D014):
