@@ -21,6 +21,9 @@ Cargo.lock
 # Conductor workspace
 .context/
 
+# GSD planning artifacts (removed from repo — do not re-commit)
+.gsd/
+
 # Python (examples/python-client/)
 __pycache__/
 *.py[cod]

@@ -1,16 +1,19 @@
 //! Admin API key integration tests (S16/M006).
 //!
 //! 라우터를 실제로 빌드한 뒤 `tower::ServiceExt::oneshot`으로 요청을 주입해
-//! HTTP 레벨에서 인증 게이트를 검증한다. 핸들러까지 도달하지 않고 401이 반환됨
-//! (extractor가 우선 거름)을 확인 → `PgPool::connect_lazy`로 DB connect 시도
-//! 없이 안전하게 테스트 가능.
+//! HTTP 레벨에서 인증 게이트를 검증한다. 보호 라우트는 extractor가 핸들러 앞에서
+//! 걸러 401을 반환하므로 DB에 닿지 않는다. 단 `/health`는 실제로 DB 연결을
+//! 시도하므로 lazy 풀에 짧은 `acquire_timeout`(100ms)을 줘 즉시 실패시킨다 —
+//! 기본값(30초)을 그대로 두면 테스트가 30초씩 매달린다.
 //!
 //! 정상 200/201/204 시나리오는 verify 스크립트(S17, docker compose 환경)에서
 //! 검증한다 — 본 파일은 *401 게이트*에 집중.
 
+use std::time::Duration;
+
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
-use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
 
 use api::routes::{build_router, ApiState};
@@ -18,8 +21,12 @@ use api::routes::{build_router, ApiState};
 const TEST_KEY: &str = "integration-test-key-32-bytes-aaaa";
 
 fn test_state() -> ApiState {
-    let db_pool =
-        PgPool::connect_lazy("postgres://test:test@localhost:5432/test").expect("lazy pool");
+    // acquire_timeout 기본값(30초)을 그대로 두면 /health 테스트가 DB 연결
+    // 시도로 30초를 소모한다 — 어차피 실패가 전제이므로 즉시 포기.
+    let db_pool = PgPoolOptions::new()
+        .acquire_timeout(Duration::from_millis(100))
+        .connect_lazy("postgres://test:test@localhost:5432/test")
+        .expect("lazy pool");
     ApiState {
         db_pool,
         admin_api_key: TEST_KEY.into(),

@@ -565,12 +565,11 @@ signal that bridges those two halves.
 
 ## Why no `npm install` / `pip install`?
 
-Per [`.gsd/DECISIONS.md`](../.gsd/DECISIONS.md) D017, the example clients
-are intentionally *stdlib-only*. Copy `client.ts` (or `client.py`) into
-your project and it works — no transitive dependencies, no version churn,
-no semver-of-our-own to manage. The "install" is a `cp`. PyPI and npm
-packaging is a separate slice (`S13.1` sketch in
-[`M001-ROADMAP.md`](../.gsd/M001-ROADMAP.md)).
+The example clients are intentionally *stdlib-only* (design decision
+D017). Copy `client.ts` (or `client.py`) into your project and it works —
+no transitive dependencies, no version churn, no semver-of-our-own to
+manage. The "install" is a `cp`. PyPI and npm packaging is a separate
+future slice.
 
 ## M004 in one paragraph
 

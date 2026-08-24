@@ -204,7 +204,7 @@ export interface FailedTxDetail {
    * The first `call_tree` frame whose `error` is non-null — the *origin* of
    * the revert in `trace_id ASC` (= pre-order DFS) order (S10 / M004).
    * `null` is explicit: the indexer recorded no per-frame error for this tx
-   * (silent default is intentionally not allowed; see `.gsd/DECISIONS.md` D014).
+   * (silent default is intentionally not allowed — design decision D014).
    */
   root_cause: TraceLog | null;
   /**

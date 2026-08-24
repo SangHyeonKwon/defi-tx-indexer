@@ -3,9 +3,9 @@
 Minimal `fetch`-based client for the Amarillo Failure Intelligence API. **No
 npm dependencies** — drop `client.ts` (and optionally `examples.ts`) into
 your project and you're done. The only runtime requirement is Node 18+
-(needs the global `fetch` and `node:crypto`). Per `.gsd/DECISIONS.md` D017,
-this is intentionally an *example client* — npm publishing is a separate
-slice (`S13.1` sketch in the ROADMAP).
+(needs the global `fetch` and `node:crypto`). This is intentionally an
+*example client* (design decision D017) — npm publishing is a separate
+future slice.
 
 ## What's in it
 

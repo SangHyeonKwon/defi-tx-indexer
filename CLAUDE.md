@@ -81,7 +81,7 @@ cargo test -p decoder        # 특정 크레이트만
 cargo test -p db -- --ignored # 통합 테스트 (PG 필요)
 
 # 린트
-cargo clippy -- -D warnings
+cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 
 # SQL 제출 스크립트 실행
