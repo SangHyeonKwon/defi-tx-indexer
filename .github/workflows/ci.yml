@@ -69,8 +69,12 @@ jobs:
       - name: Apply views/procedures/triggers + seed
         run: scripts/seed.sh "$DATABASE_URL"
 
-      - name: Integration tests (db, requires PG + seed)
-        run: cargo test -p db -- --ignored
+      # db(쿼리 계층) + api(admin 인증 성공 경로 등 HTTP 계층)의 #[ignore]
+      # 테스트를 모두 실행 — decoder/indexer는 ignored 테스트가 없어 no-op.
+      # --tests: doctest 제외(Unit tests 스텝에서 이미 실행). `-- --ignored`는
+      # ```ignore doc 블록까지 컴파일하려 들기 때문에 명시적으로 막는다.
+      - name: Integration tests (db + api, requires PG + seed)
+        run: cargo test --workspace --tests -- --ignored
 
   web:
     name: Web — tests + build (build includes tsc)
