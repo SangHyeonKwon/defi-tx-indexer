@@ -1368,7 +1368,14 @@ pub async fn failed_tx_by_label_aggregate(
         })
         .collect();
 
-    out.sort_by_key(|p| std::cmp::Reverse(p.total_failures));
+    // 동점 시 (label, address) 보조 키 — HashMap 순회 순서에 의존하면
+    // limit 경계에서 응답이 호출마다 달라진다.
+    out.sort_by(|a, b| {
+        b.total_failures
+            .cmp(&a.total_failures)
+            .then_with(|| a.label.cmp(&b.label))
+            .then_with(|| a.address.cmp(&b.address))
+    });
     if limit > 0 {
         out.truncate(limit as usize);
     }
