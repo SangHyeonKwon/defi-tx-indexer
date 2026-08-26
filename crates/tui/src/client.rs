@@ -10,6 +10,7 @@ use serde::de::DeserializeOwned;
 use crate::config::TuiConfig;
 use crate::dto::{
     ApiErrorBody, ApiResponse, FailedTransaction, FailedTxAnalysis, FailedTxDetail, TotalPaginated,
+    UnknownRevertCluster,
 };
 use crate::error::TuiError;
 
@@ -76,6 +77,14 @@ impl ApiClient {
     pub async fn failed_tx_analysis(&self) -> Result<Vec<FailedTxAnalysis>, TuiError> {
         let r: ApiResponse<Vec<FailedTxAnalysis>> =
             self.get_json("/v1/analytics/failed-tx", &[]).await?;
+        Ok(r.data)
+    }
+
+    /// `GET /v1/analytics/failed-tx/unknown-clusters` — UNKNOWN revert 클러스터.
+    pub async fn unknown_clusters(&self) -> Result<Vec<UnknownRevertCluster>, TuiError> {
+        let r: ApiResponse<Vec<UnknownRevertCluster>> = self
+            .get_json("/v1/analytics/failed-tx/unknown-clusters", &[])
+            .await?;
         Ok(r.data)
     }
 

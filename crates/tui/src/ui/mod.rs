@@ -1,5 +1,6 @@
 //! 렌더링 — 탭/본문/상태바 레이아웃, 화면 디스패치, 도움말 오버레이, 공용 헬퍼.
 
+mod clusters;
 mod detail;
 mod failed_tx;
 mod overview;
@@ -37,6 +38,7 @@ pub fn draw(f: &mut Frame<'_>, app: &App) {
         Screen::Overview => overview::render(f, chunks[2], app),
         Screen::FailedTx => failed_tx::render(f, chunks[2], app),
         Screen::Detail => detail::render(f, chunks[2], app),
+        Screen::Clusters => clusters::render(f, chunks[2], app),
     }
     render_status(f, chunks[3], app);
 
@@ -68,7 +70,12 @@ fn render_banner(f: &mut Frame<'_>, area: Rect) {
 }
 
 fn render_tabs(f: &mut Frame<'_>, area: Rect, app: &App) {
-    let titles = vec!["[1] Overview", "[2] Failed Tx", "[3] Detail"];
+    let titles = vec![
+        "[1] Overview",
+        "[2] Failed Tx",
+        "[3] Detail",
+        "[4] Clusters",
+    ];
     let tabs = Tabs::new(titles)
         .block(Block::default().borders(Borders::ALL).title(" amarillo "))
         .select(app.screen.index())
@@ -101,6 +108,7 @@ fn render_status(f: &mut Frame<'_>, area: Rect, app: &App) {
         Screen::Overview => "Tab switch · r refresh · p poll",
         Screen::FailedTx => "j/k move · Enter detail · c cat · t window · n/b page",
         Screen::Detail => "j/k scroll · Esc back",
+        Screen::Clusters => "j/k move · r refresh · p poll",
     };
     let line = format!(
         "{spinner}{} · {poll} · {updated} · {hints} · ? help · q quit",
@@ -119,7 +127,7 @@ fn render_help(f: &mut Frame<'_>, area: Rect) {
         Line::from("amarillo-tui — keys"),
         Line::from(""),
         Line::from("Tab / Shift+Tab    switch tab"),
-        Line::from("1 / 2 / 3          Overview / Failed Tx / Detail"),
+        Line::from("1 / 2 / 3 / 4      Overview / Failed Tx / Detail / Clusters"),
         Line::from("j / k  ↑ / ↓       move selection / scroll"),
         Line::from("Enter              open detail for selected row"),
         Line::from("Esc                back"),

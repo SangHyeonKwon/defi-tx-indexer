@@ -749,7 +749,7 @@ CREATE TRIGGER trg_liquidity_event_audit
     EXECUTE FUNCTION fn_trg_liquidity_event_audit();
 
 -- ================================================================
--- 8. VIEWS (7개)
+-- 8. VIEWS (8개 + 정규화 함수 fn_revert_template)
 -- ================================================================
 
 -- 1. vw_daily_swap_volume
@@ -830,6 +830,74 @@ SELECT p.pool_address, p.pair_name, p.fee_tier, COUNT(s.event_id) AS total_swaps
        SUM(s.amount_in) AS total_volume, SUM(s.amount_in) * p.fee_tier / 1000000 AS estimated_fee_revenue
 FROM pool p LEFT JOIN swap_event s ON p.pool_address = s.pool_address
 GROUP BY p.pool_address, p.pair_name, p.fee_tier ORDER BY estimated_fee_revenue DESC;
+
+-- fn_revert_template — revert reason을 클러스터 템플릿으로 정규화
+-- (UNKNOWN 클러스터링용: 주소/긴 숫자/hex 인자 치환, 커스텀 에러는 셀렉터 축약.
+--  뷰가 참조하므로 뷰보다 먼저 정의. 상세 주석은 sql/views/001_views.sql 참조)
+CREATE OR REPLACE FUNCTION fn_revert_template(p_reason TEXT)
+RETURNS TEXT
+LANGUAGE sql
+IMMUTABLE
+AS $$
+SELECT CASE
+    WHEN p_reason IS NULL OR btrim(p_reason) = '' OR btrim(p_reason) = '0x'
+        THEN '(no revert data)'
+    WHEN p_reason ~ '^Panic\(0x[0-9a-fA-F]+\)$'
+        THEN p_reason
+    WHEN p_reason ~ '^0x[0-9a-fA-F]{8,}$'
+        THEN 'custom_error:' || lower(left(p_reason, 10))
+    WHEN p_reason ~ '^0x[0-9a-fA-F]+$'
+        THEN '(undecodable output)'
+    ELSE
+        btrim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(
+            p_reason,
+            '0x[0-9a-fA-F]{41,}', '{hex}', 'g'),
+            '0x[0-9a-fA-F]{40}',  '{addr}', 'g'),
+            '0x[0-9a-fA-F]{1,39}', '{hex}', 'g'),
+            '[0-9]{4,}',          '{n}',   'g'),
+            '\s+',                ' ',     'g'))
+END;
+$$;
+
+COMMENT ON FUNCTION fn_revert_template(TEXT) IS
+    'revert reason 원문을 클러스터 템플릿으로 정규화 — 주소/긴 숫자/hex 인자를 플레이스홀더로 치환, 커스텀 에러는 4바이트 셀렉터로 축약';
+
+-- 8. vw_unknown_revert_clusters — UNKNOWN revert 사유 템플릿 클러스터링
+--    상위 클러스터가 곧 classifier 신규 룰/카테고리 후보
+CREATE OR REPLACE VIEW vw_unknown_revert_clusters AS
+WITH unknown_tx AS (
+    SELECT f.tx_hash, f.revert_reason, f.failing_function, f.gas_used, f.timestamp,
+           fn_revert_template(f.revert_reason) AS template
+    FROM failed_transaction f
+    WHERE f.error_category = 'UNKNOWN'
+),
+total AS (SELECT COUNT(*) AS total_unknown FROM unknown_tx)
+SELECT
+    u.template,
+    CASE
+        WHEN u.template IN ('(no revert data)', '(undecodable output)') THEN 'NO_DATA'
+        WHEN u.template LIKE 'custom_error:%' THEN 'CUSTOM_ERROR'
+        WHEN u.template ~ '^Panic\(0x'        THEN 'PANIC'
+        ELSE 'TEXT'
+    END AS cluster_kind,
+    COUNT(*) AS occurrences,
+    ROUND(100.0 * COUNT(*) / GREATEST(t.total_unknown, 1), 2) AS pct_of_unknown,
+    SUM(u.gas_used) AS total_gas_wasted,
+    ROUND(AVG(u.gas_used)) AS avg_gas_wasted,
+    COUNT(DISTINCT tx.from_addr) AS distinct_senders,
+    COUNT(DISTINCT u.failing_function) AS distinct_selectors,
+    MIN(u.revert_reason) AS sample_revert_reason,
+    MIN(u.tx_hash) AS sample_tx_hash,
+    MIN(u.timestamp) AS first_seen,
+    MAX(u.timestamp) AS last_seen
+FROM unknown_tx u
+CROSS JOIN total t
+LEFT JOIN transaction tx ON tx.tx_hash = u.tx_hash
+GROUP BY u.template, t.total_unknown
+ORDER BY occurrences DESC, total_gas_wasted DESC;
+
+COMMENT ON VIEW vw_unknown_revert_clusters IS
+    'UNKNOWN 실패의 revert 사유를 템플릿 단위로 클러스터링 — 상위 클러스터가 classifier 신규 룰 후보 (빈도·가스 낭비·영향 주소 수 포함)';
 
 -- ================================================================
 -- 9. PROCEDURES & FUNCTIONS

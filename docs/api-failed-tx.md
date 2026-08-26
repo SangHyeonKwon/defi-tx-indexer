@@ -420,6 +420,63 @@ Unknown `interval`, or non-RFC3339 `from`/`to`:
 { "error": "invalid `interval` (hour|day|week): bogus" }
 ```
 
+## `GET /v1/analytics/failed-tx/unknown-clusters`
+
+Clusters of failures the classifier left as `UNKNOWN`, grouped by a normalized
+revert-reason template (`fn_revert_template`) and ranked by frequency / wasted
+gas — reads `vw_unknown_revert_clusters`. The top rows are the next
+classifier-rule candidates: a `TEXT` cluster can usually be turned into a rule
+immediately, a `CUSTOM_ERROR` cluster identifies an undecoded 4-byte selector.
+
+Public GET, no auth. No query parameters: the view is an aggregate over the
+UNKNOWN population, so the result set is inherently small — all rows are
+returned, in the view's order (`occurrences DESC, total_gas_wasted DESC`).
+
+### Response `200`
+
+`ApiResponse<UnknownRevertCluster[]>`:
+
+Measured against the seed data (one bare-revert UNKNOWN failure):
+
+```jsonc
+{
+  "data": [
+    {
+      "template": "(no revert data)",          // normalized cluster key
+      "cluster_kind": "NO_DATA",               // NO_DATA | CUSTOM_ERROR | PANIC | TEXT
+      "occurrences": 1,
+      "pct_of_unknown": "100",                 // NUMERIC → string, % of all UNKNOWN
+      "total_gas_wasted": "41000",             // NUMERIC (SUM of BIGINT) → string
+      "avg_gas_wasted": "41000",               // NUMERIC (ROUND(AVG)) → string
+      "distinct_senders": 1,
+      "distinct_selectors": 0,
+      "sample_revert_reason": null,            // independent MIN — example only
+      "sample_tx_hash": "0xdead000000000000000000000000000000000000000000000000000000000004",
+      "first_seen": "2023-09-01T12:00:29Z",
+      "last_seen": "2023-09-01T12:00:29Z"
+    }
+  ]
+}
+```
+
+`cluster_kind` semantics:
+
+| Kind | Meaning |
+|------|---------|
+| `NO_DATA` | No usable revert output (out-of-gas, bare `revert()`, or output too short to hold a 4-byte selector) |
+| `CUSTOM_ERROR` | Undecoded custom error, clustered by 4-byte selector |
+| `PANIC` | Solidity `Panic(uint256)` (0x11 overflow, 0x12 div-by-zero, …) |
+| `TEXT` | Decoded `Error(string)` that matched no classifier rule |
+
+Caveats: `sample_revert_reason` and `sample_tx_hash` are *independent* `MIN`s —
+they may not come from the same row, so treat them as representative examples
+only. NUMERIC columns serialize as JSON **strings** (BigDecimal), consistent
+with the other analytics endpoints — note that trailing zeros are not
+preserved (`ROUND(…, 2)` of `100.00` arrives as `"100"`), so clients must
+parse, not string-match.
+
+An empty UNKNOWN population yields **200** with `{ "data": [] }`.
+
 ## `GET /v1/analytics/failed-tx/by-label` — Failures by labeled contract (S09 / M003)
 
 Joins on-chain failure data (`failed_transaction × transaction`) with the

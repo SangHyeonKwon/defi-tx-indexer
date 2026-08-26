@@ -19,12 +19,18 @@ amarillo instance.
 - **Detail** — drill into one transaction (`GET /v1/failed-tx/{tx_hash}`): the
   call tree with the **root-cause frame highlighted**, decoded function +
   typed args, and the human diagnosis (why it failed + how to fix).
+- **Clusters** — UNKNOWN-revert clusters
+  (`GET /v1/analytics/failed-tx/unknown-clusters`): failures the classifier
+  could not categorize, grouped by normalized revert-reason template and ranked
+  by occurrences / wasted gas. Columns: template, kind
+  (`NO_DATA | CUSTOM_ERROR | PANIC | TEXT`), count, % of UNKNOWN, total/avg gas
+  wasted, last seen. The top rows are the next classifier-rule candidates.
 
 ## Keys
 
 | Key | Action |
 |-----|--------|
-| `Tab` / `Shift+Tab`, `1`/`2`/`3` | switch screen |
+| `Tab` / `Shift+Tab`, `1`/`2`/`3`/`4` | switch screen |
 | `j`/`k`, `↑`/`↓` | move selection (Detail: scroll) |
 | `Enter` | open detail for the selected row |
 | `Esc` | back / close help |
@@ -69,4 +75,4 @@ state for non-blocking spinners and error banners.
 
 Module map: `config` · `error` · `dto` (wire mirror) · `client` (reqwest) ·
 `format` (web parity) · `terminal` (setup + panic hook) · `event` (key → action)
-· `app` (state machine + loop) · `ui/{overview,failed_tx,detail}`.
+· `app` (state machine + loop) · `ui/{overview,failed_tx,detail,clusters}`.

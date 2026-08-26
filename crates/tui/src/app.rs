@@ -15,7 +15,9 @@ use tokio::sync::mpsc;
 
 use crate::client::ApiClient;
 use crate::config::TuiConfig;
-use crate::dto::{FailedTransaction, FailedTxAnalysis, FailedTxDetail, TotalPaginated};
+use crate::dto::{
+    FailedTransaction, FailedTxAnalysis, FailedTxDetail, TotalPaginated, UnknownRevertCluster,
+};
 use crate::event::{self, Action, DataMsg};
 use crate::format;
 use crate::terminal::Tui;
@@ -30,6 +32,8 @@ pub enum Screen {
     FailedTx,
     /// 단건 진단 상세.
     Detail,
+    /// UNKNOWN revert 클러스터.
+    Clusters,
 }
 
 impl Screen {
@@ -39,12 +43,18 @@ impl Screen {
             Screen::Overview => 0,
             Screen::FailedTx => 1,
             Screen::Detail => 2,
+            Screen::Clusters => 3,
         }
     }
 }
 
 /// 화면 순환 순서.
-const SCREEN_ORDER: [Screen; 3] = [Screen::Overview, Screen::FailedTx, Screen::Detail];
+const SCREEN_ORDER: [Screen; 4] = [
+    Screen::Overview,
+    Screen::FailedTx,
+    Screen::Detail,
+    Screen::Clusters,
+];
 
 /// 시간 필터 윈도우.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,6 +186,10 @@ pub struct App {
     pub detail_scroll: u16,
     /// Detail 대상 tx 해시.
     pub selected_hash: Option<String>,
+    /// Clusters: UNKNOWN revert 클러스터 목록.
+    pub clusters: Loadable<Vec<UnknownRevertCluster>>,
+    /// Clusters: 테이블 선택 상태.
+    pub cluster_state: TableState,
 }
 
 impl App {
@@ -210,6 +224,8 @@ impl App {
             detail: Loadable::Idle,
             detail_scroll: 0,
             selected_hash: None,
+            clusters: Loadable::Idle,
+            cluster_state: TableState::default(),
         }
     }
 
@@ -263,6 +279,10 @@ impl App {
                 self.clamp_selection();
             }
             DataMsg::Detail(r) => self.detail = settle(r.map(|b| *b)),
+            DataMsg::Clusters(r) => {
+                self.clusters = settle(r);
+                self.clamp_cluster_selection();
+            }
         }
     }
 
@@ -312,6 +332,15 @@ impl App {
                         let _ = t.send(DataMsg::Detail(r));
                     });
                 }
+            }
+            Screen::Clusters => {
+                begin(&mut self.clusters);
+                self.inflight += 1;
+                let (c, t) = (self.client.clone(), self.tx.clone());
+                tokio::spawn(async move {
+                    let r = c.unknown_clusters().await.map_err(|e| e.to_string());
+                    let _ = t.send(DataMsg::Clusters(r));
+                });
             }
         }
     }
@@ -374,6 +403,7 @@ impl App {
         match self.screen {
             Screen::FailedTx => self.move_selection(1),
             Screen::Detail => self.detail_scroll = self.detail_scroll.saturating_add(1),
+            Screen::Clusters => self.move_cluster_selection(1),
             Screen::Overview => {}
         }
     }
@@ -382,6 +412,7 @@ impl App {
         match self.screen {
             Screen::FailedTx => self.move_selection(-1),
             Screen::Detail => self.detail_scroll = self.detail_scroll.saturating_sub(1),
+            Screen::Clusters => self.move_cluster_selection(-1),
             Screen::Overview => {}
         }
     }
@@ -411,6 +442,33 @@ impl App {
             None => Some(0),
         };
         self.table_state.select(new);
+    }
+
+    fn move_cluster_selection(&mut self, dir: i32) {
+        let len = match &self.clusters {
+            Loadable::Loaded(rows) => rows.len(),
+            _ => 0,
+        };
+        if len == 0 {
+            return;
+        }
+        let cur = self.cluster_state.selected().unwrap_or(0) as i32;
+        let next = (cur + dir).clamp(0, len as i32 - 1) as usize;
+        self.cluster_state.select(Some(next));
+    }
+
+    fn clamp_cluster_selection(&mut self) {
+        let len = match &self.clusters {
+            Loadable::Loaded(rows) => rows.len(),
+            _ => 0,
+        };
+        let new = match self.cluster_state.selected() {
+            _ if len == 0 => None,
+            Some(i) if i >= len => Some(len - 1),
+            Some(i) => Some(i),
+            None => Some(0),
+        };
+        self.cluster_state.select(new);
     }
 
     fn cycle_category(&mut self) {

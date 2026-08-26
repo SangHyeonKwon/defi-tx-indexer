@@ -20,6 +20,16 @@ pub fn classify_error(revert_reason: &str) -> &'static str {
     if lower.contains("allowance") {
         return "INSUFFICIENT_ALLOWANCE";
     }
+
+    // 애그리게이터 슬리피지 계열 — S12.1 세부 우선
+    //   "return amount is not enough" / "min return" → 1inch 계열 애그리게이터의
+    //   출력 최소치 미달 (의미상 "Too little received"와 동일한 amountOut 부족).
+    //   generic "not enough" 키워드가 INSUFFICIENT_BALANCE로 삼키기 전에
+    //   먼저 매칭해야 하므로 반드시 잔액 부족 블록 *앞*에 위치.
+    if lower.contains("return amount is not enough") || lower.contains("min return") {
+        return "SLIPPAGE_AMOUNT_OUT";
+    }
+
     if lower.contains("stf")
         || lower.contains("insufficient")
         || lower.contains("balance")
@@ -67,8 +77,14 @@ pub fn classify_error(revert_reason: &str) -> &'static str {
     }
 
     // 전송 실패
+    //   "transfer_from_failed" — Uniswap V2 계열 TransferHelper의
+    //   "TRANSFER_FROM_FAILED"는 "transfer_failed"의 부분 문자열 매칭에 걸리지
+    //   않으므로 별도 키워드 필요. 공백 변형도 기존 spaced/underscored 쌍과
+    //   대칭으로 함께 매칭.
     if lower.contains("transfer failed")
         || lower.contains("transfer_failed")
+        || lower.contains("transfer_from_failed")
+        || lower.contains("transfer from failed")
         || lower.contains("safe transfer")
         || lower.contains("safetransferfrom")
     {
@@ -171,12 +187,51 @@ mod tests {
         );
     }
 
+    // S12.1 — 1inch 계열 애그리게이터 슬리피지 문자열은 "not enough"를 포함하지만
+    // 의미상 amountOut 부족 → SLIPPAGE_AMOUNT_OUT. INSUFFICIENT_BALANCE 블록보다
+    // 먼저 매칭되어야 하는 룰 순서 회귀 가드.
+    #[test]
+    fn test_classify_aggregator_slippage_amount_out() {
+        assert_eq!(
+            classify_error("Return amount is not enough"),
+            "SLIPPAGE_AMOUNT_OUT"
+        );
+        assert_eq!(
+            classify_error("Min return not reached"),
+            "SLIPPAGE_AMOUNT_OUT"
+        );
+    }
+
+    // 룰 순서 가드 — 애그리게이터 세부 룰 추가 후에도 generic "not enough" /
+    // "insufficient"는 여전히 INSUFFICIENT_BALANCE로 fallback해야 한다.
+    #[test]
+    fn test_classify_generic_not_enough_still_balance() {
+        assert_eq!(classify_error("not enough tokens"), "INSUFFICIENT_BALANCE");
+        assert_eq!(classify_error("insufficient funds"), "INSUFFICIENT_BALANCE");
+        // "allowance"는 여전히 balance보다 우선.
+        assert_eq!(
+            classify_error("insufficient allowance"),
+            "INSUFFICIENT_ALLOWANCE"
+        );
+    }
+
     #[test]
     fn test_classify_transfer_failed() {
         assert_eq!(
             classify_error("TransferHelper: TRANSFER_FAILED"),
             "TRANSFER_FAILED"
         );
+    }
+
+    // Uniswap V2 계열 TransferHelper — "TRANSFER_FROM_FAILED"는 "transfer_failed"의
+    // 부분 문자열이 아니라 UNKNOWN으로 떨어지던 룰 공백 회귀 가드.
+    #[test]
+    fn test_classify_transfer_from_failed() {
+        assert_eq!(
+            classify_error("TransferHelper: TRANSFER_FROM_FAILED"),
+            "TRANSFER_FAILED"
+        );
+        assert_eq!(classify_error("transfer from failed"), "TRANSFER_FAILED");
     }
 
     #[test]

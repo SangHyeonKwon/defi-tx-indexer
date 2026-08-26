@@ -7,7 +7,9 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::Screen;
-use crate::dto::{FailedTransaction, FailedTxAnalysis, FailedTxDetail, TotalPaginated};
+use crate::dto::{
+    FailedTransaction, FailedTxAnalysis, FailedTxDetail, TotalPaginated, UnknownRevertCluster,
+};
 
 /// 사용자 입력에서 파생된 의도 (Elm 스타일 메시지).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +60,8 @@ pub enum DataMsg {
     FailedList(Result<Box<TotalPaginated<FailedTransaction>>, String>),
     /// `failed_tx_detail` 결과.
     Detail(Result<Box<FailedTxDetail>, String>),
+    /// `unknown_clusters` 결과.
+    Clusters(Result<Vec<UnknownRevertCluster>, String>),
 }
 
 /// crossterm 키 이벤트를 [`Action`]으로 변환한다.
@@ -86,6 +90,7 @@ pub fn map_key(key: KeyEvent, show_help: bool) -> Action {
         KeyCode::Char('1') => Action::SelectScreen(Screen::Overview),
         KeyCode::Char('2') => Action::SelectScreen(Screen::FailedTx),
         KeyCode::Char('3') => Action::SelectScreen(Screen::Detail),
+        KeyCode::Char('4') => Action::SelectScreen(Screen::Clusters),
         KeyCode::Esc => Action::Back,
         KeyCode::Enter => Action::Enter,
         KeyCode::Char('j') | KeyCode::Down => Action::Down,
@@ -122,6 +127,10 @@ mod tests {
         assert_eq!(
             map_key(key(KeyCode::Char('2')), false),
             Action::SelectScreen(Screen::FailedTx)
+        );
+        assert_eq!(
+            map_key(key(KeyCode::Char('4')), false),
+            Action::SelectScreen(Screen::Clusters)
         );
     }
 

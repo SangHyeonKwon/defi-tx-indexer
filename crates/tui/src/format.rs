@@ -71,6 +71,19 @@ pub fn error_category_color(raw: &str) -> Color {
     }
 }
 
+/// UNKNOWN revert 클러스터 종류별 안정적 색.
+///
+/// NO_DATA는 중립 회색(출력 자체가 없음), CUSTOM_ERROR는 보라(미디코딩 셀렉터),
+/// PANIC은 적색(Solidity Panic), TEXT는 앰버(즉시 룰 추가 가능한 후보).
+pub fn cluster_kind_color(kind: &str) -> Color {
+    match kind {
+        "CUSTOM_ERROR" => Color::Rgb(0xC9, 0x81, 0xE6),
+        "PANIC" => Color::Rgb(0xF6, 0x60, 0x61),
+        "TEXT" => Color::Rgb(0xF4, 0xBD, 0x50),
+        _ => Color::Rgb(0x88, 0x88, 0x88), // NO_DATA 및 미지의 값
+    }
+}
+
 /// 와이어 `Decimal`(문자열)을 `f64`로 — 비유한 값은 0.
 pub fn to_number(s: &str) -> f64 {
     let n: f64 = s.trim().parse().unwrap_or(f64::NAN);
@@ -202,6 +215,16 @@ mod tests {
         );
         assert_eq!(
             error_category_color("Unknown"),
+            Color::Rgb(0x88, 0x88, 0x88)
+        );
+    }
+
+    #[test]
+    fn cluster_kind_colors_are_stable() {
+        assert_eq!(cluster_kind_color("PANIC"), Color::Rgb(0xF6, 0x60, 0x61));
+        assert_eq!(cluster_kind_color("NO_DATA"), Color::Rgb(0x88, 0x88, 0x88));
+        assert_eq!(
+            cluster_kind_color("something-weird"),
             Color::Rgb(0x88, 0x88, 0x88)
         );
     }

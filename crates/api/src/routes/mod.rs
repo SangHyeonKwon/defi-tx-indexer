@@ -68,6 +68,10 @@ fn v1_router() -> Router<ApiState> {
             get(failed_tx::failed_tx_timeseries),
         )
         .route(
+            "/analytics/failed-tx/unknown-clusters",
+            get(analytics::unknown_revert_clusters),
+        )
+        .route(
             "/analytics/failed-tx/by-label",
             get(failed_tx::failed_tx_by_label),
         )
